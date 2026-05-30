@@ -1,4 +1,4 @@
-"""Lazy dataset handle (sync). One per slug; caches its resolved OGC collection id."""
+"""Lazy dataset handle (sync). One per slug."""
 from __future__ import annotations
 from typing import Any, Iterator
 from .models import DatasetSummary
@@ -15,7 +15,6 @@ class Dataset:
     def __init__(self, transport, slug: str):
         self._t = transport
         self.slug = slug
-        self._collection_id: str | None = None
 
     # --- metadata / sample ---
     def metadata(self, locale: str | None = None) -> DatasetSummary:
@@ -43,11 +42,8 @@ class Dataset:
         return to_geodataframe(self.to_geojson())
 
     # --- spatial / OGC ---
-    def _resolve_collection_id(self) -> str:
-        if self._collection_id is None:
-            self._collection_id = "dataset-" + self.metadata().id
-        return self._collection_id
-
+    # The OGC collectionId is the dataset slug, so items() addresses the
+    # collection by slug directly — no metadata round-trip needed.
     def _items_params(self, bbox, limit, offset, category, city, country) -> dict:
         p = {"limit": limit, "offset": offset, "category": category,
              "city": city, "country": country}
@@ -57,19 +53,17 @@ class Dataset:
 
     def items(self, *, bbox=None, limit: int | None = 100, offset: int | None = None,
               category=None, city=None, country=None) -> dict:
-        cid = self._resolve_collection_id()
         return self._t.get_json(
-            f"/v1/ogc/collections/{cid}/items",
+            f"/v1/ogc/collections/{self.slug}/items",
             params=self._items_params(bbox, limit, offset, category, city, country),
         )
 
     def iter_items(self, *, page_size: int = 100, total_limit: int | None = None,
                    bbox=None, category=None, city=None, country=None) -> Iterator[dict]:
-        cid = self._resolve_collection_id()
         yielded, offset = 0, 0
         while True:
             params = self._items_params(bbox, page_size, offset, category, city, country)
-            fc = self._t.get_json(f"/v1/ogc/collections/{cid}/items", params=params)
+            fc = self._t.get_json(f"/v1/ogc/collections/{self.slug}/items", params=params)
             feats = fc.get("features", [])
             if not feats:
                 return

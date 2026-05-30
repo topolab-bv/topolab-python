@@ -16,7 +16,6 @@ class AsyncDataset:
     def __init__(self, transport, slug: str):
         self._t = transport
         self.slug = slug
-        self._collection_id: str | None = None
 
     async def metadata(self, locale: str | None = None) -> DatasetSummary:
         return DatasetSummary.model_validate(
@@ -25,22 +24,18 @@ class AsyncDataset:
     async def to_geojson(self) -> dict:
         return await self._t.aget_json(f"/v1/dataset/{self.slug}/files/geojson")
 
-    async def _cid(self) -> str:
-        if self._collection_id is None:
-            self._collection_id = "dataset-" + (await self.metadata()).id
-        return self._collection_id
-
+    # The OGC collectionId is the dataset slug, so items() addresses the
+    # collection by slug directly — no metadata round-trip needed.
     async def items(self, *, bbox=None, limit=100, offset=None,
                     category=None, city=None, country=None) -> dict:
         p = _clean({"limit": limit, "offset": offset, "category": category,
                     "city": city, "country": country})
         if bbox is not None:
             p["bbox"] = ",".join(str(x) for x in bbox)
-        return await self._t.aget_json(f"/v1/ogc/collections/{await self._cid()}/items", params=p)
+        return await self._t.aget_json(f"/v1/ogc/collections/{self.slug}/items", params=p)
 
     async def iter_items(self, *, page_size=100, total_limit=None, bbox=None,
                          category=None, city=None, country=None) -> AsyncIterator[dict]:
-        cid = await self._cid()
         yielded = 0
         offset = 0
         while True:
@@ -48,7 +43,7 @@ class AsyncDataset:
                         "city": city, "country": country})
             if bbox is not None:
                 p["bbox"] = ",".join(str(x) for x in bbox)
-            fc = await self._t.aget_json(f"/v1/ogc/collections/{cid}/items", params=p)
+            fc = await self._t.aget_json(f"/v1/ogc/collections/{self.slug}/items", params=p)
             feats = fc.get("features", [])
             if not feats:
                 return
