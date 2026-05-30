@@ -19,6 +19,8 @@
 
 ---
 
+📖 **Docs:** [topolab-bv.github.io/topolab-python](https://topolab-bv.github.io/topolab-python/) · full platform docs at [docs.topolab.nl](https://docs.topolab.nl)
+
 ## Install
 
 ```bash
