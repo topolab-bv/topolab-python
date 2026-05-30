@@ -51,6 +51,19 @@ from topolab import Client
 tl = Client(api_key=os.environ["TOPOLAB_API_KEY"])
 ```
 
+## Staging vs production
+
+The client targets **production** (`https://api.topolab.nl`) by default. Point it
+at staging with the `environment` argument:
+
+```python
+tl = Client(api_key="tlb_staging_...", environment="staging")  # https://api-staging.topolab.nl
+```
+
+Or set `TOPOLAB_ENV=staging` in the environment. An explicit `base_url=` always
+wins (for self-hosting or tests). Precedence: `base_url` → `environment` →
+`TOPOLAB_BASE_URL` → `TOPOLAB_ENV` → production.
+
 ## What you can do
 
 ### Browse the catalog

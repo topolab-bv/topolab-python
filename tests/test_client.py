@@ -25,3 +25,41 @@ def test_missing_key_raises(monkeypatch):
     monkeypatch.delenv("TOPOLAB_API_KEY", raising=False)
     with pytest.raises(ConfigurationError):
         Client(api_key=None, base_url=BASE)
+
+
+def test_default_environment_is_production(monkeypatch):
+    monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
+    monkeypatch.delenv("TOPOLAB_ENV", raising=False)
+    assert Client(api_key="k").base_url == "https://api.topolab.nl"
+
+
+def test_environment_staging(monkeypatch):
+    monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
+    monkeypatch.delenv("TOPOLAB_ENV", raising=False)
+    assert Client(api_key="k", environment="staging").base_url == "https://api-staging.topolab.nl"
+
+
+def test_unknown_environment_raises():
+    with pytest.raises(ConfigurationError):
+        Client(api_key="k", environment="dev")
+
+
+def test_topolab_env_var(monkeypatch):
+    monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
+    monkeypatch.setenv("TOPOLAB_ENV", "staging")
+    assert Client(api_key="k").base_url == "https://api-staging.topolab.nl"
+
+
+def test_base_url_beats_environment(monkeypatch):
+    monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
+    monkeypatch.delenv("TOPOLAB_ENV", raising=False)
+    # explicit base_url wins over environment
+    c = Client(api_key="k", base_url="https://self.example/api", environment="staging")
+    assert c.base_url == "https://self.example/api"
+
+
+def test_async_environment_staging(monkeypatch):
+    from topolab import AsyncClient
+    monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
+    monkeypatch.delenv("TOPOLAB_ENV", raising=False)
+    assert AsyncClient(api_key="k", environment="staging").base_url == "https://api-staging.topolab.nl"
