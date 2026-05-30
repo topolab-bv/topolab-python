@@ -1,7 +1,9 @@
 """Sync + async HTTP transport: header injection, retry/backoff, error mapping."""
 from __future__ import annotations
+import os
 import time
 import asyncio
+import pathlib
 from typing import Any
 import httpx
 from ._version import __version__
@@ -84,9 +86,18 @@ class Transport:
                     if resp.status_code >= 400:
                         resp.read()
                         raise error_from_response(resp)
-                    with open(dest, "wb") as fh:
-                        for chunk in resp.iter_bytes(65536):
-                            fh.write(chunk)
+                    # Stream to a sibling temp file and atomically replace, so a
+                    # connection dropped mid-body never leaves a truncated file
+                    # at `dest`.
+                    tmp = f"{dest}.part"
+                    try:
+                        with open(tmp, "wb") as fh:
+                            for chunk in resp.iter_bytes(65536):
+                                fh.write(chunk)
+                        os.replace(tmp, dest)
+                    except BaseException:
+                        pathlib.Path(tmp).unlink(missing_ok=True)
+                        raise
                     return
             except httpx.TransportError as e:
                 if attempt >= self._max_retries:
