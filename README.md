@@ -26,6 +26,9 @@ pip install topolab          # core — GeoJSON-first, minimal dependencies
 pip install "topolab[geo]"   # adds GeoPandas for .to_geodataframe()
 ```
 
+> **Pre-release:** until the first version is published to PyPI, install from Git:
+> `pip install "git+https://github.com/topolab-bv/topolab-python.git"`
+
 Requires Python 3.10+.
 
 ## Quickstart

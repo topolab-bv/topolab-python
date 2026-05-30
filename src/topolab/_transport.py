@@ -71,9 +71,6 @@ class Transport:
     def get_json(self, path: str, **kw) -> Any:
         return self.request("GET", path, **kw).json()
 
-    def get_bytes(self, path: str, **kw) -> bytes:
-        return self.request("GET", path, **kw).content
-
     def stream_to_file(self, path: str, dest, **kw) -> None:
         # streamed GET that never buffers the whole body in memory
         for attempt in range(self._max_retries + 1):
@@ -137,8 +134,35 @@ class Transport:
     async def aget_json(self, path: str, **kw) -> Any:
         return (await self.arequest("GET", path, **kw)).json()
 
-    async def aget_bytes(self, path: str, **kw) -> bytes:
-        return (await self.arequest("GET", path, **kw)).content
+    async def astream_to_file(self, path: str, dest, **kw) -> None:
+        # Async streamed GET that never buffers the whole body in memory.
+        # Mirrors stream_to_file: temp .part + atomic os.replace so a dropped
+        # connection never leaves a truncated file at `dest`.
+        client = self._ensure_async()
+        for attempt in range(self._max_retries + 1):
+            try:
+                async with client.stream("GET", path, **kw) as resp:
+                    if resp.status_code in _RETRY_STATUS and attempt < self._max_retries:
+                        await resp.aread()
+                        await asyncio.sleep(self._delay(attempt, resp))
+                        continue
+                    if resp.status_code >= 400:
+                        await resp.aread()
+                        raise error_from_response(resp)
+                    tmp = f"{dest}.part"
+                    try:
+                        with open(tmp, "wb") as fh:
+                            async for chunk in resp.aiter_bytes(65536):
+                                fh.write(chunk)
+                        os.replace(tmp, dest)
+                    except BaseException:
+                        pathlib.Path(tmp).unlink(missing_ok=True)
+                        raise
+                    return
+            except httpx.TransportError as e:
+                if attempt >= self._max_retries:
+                    raise TLConnError(str(e)) from e
+                await asyncio.sleep(self._delay(attempt, None))
 
     async def aclose(self) -> None:
         if self._async is not None:
