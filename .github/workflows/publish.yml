@@ -1,14 +1,17 @@
 name: publish
 on:
-  release: { types: [published] }
+  release:
+    types: [published]
 jobs:
   pypi:
-    if: ${{ false }}   # GATED: enable when ready to publish to PyPI
+    if: ${{ false }} # GATED: enable when ready to publish to PyPI
     runs-on: ubuntu-latest
-    permissions: { id-token: write }
+    permissions:
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with:
+          python-version: "3.12"
       - run: pip install uv && uv build
       - uses: pypa/gh-action-pypi-publish@release/v1
