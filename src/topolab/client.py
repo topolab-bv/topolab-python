@@ -1,6 +1,7 @@
 """Synchronous Topolab client."""
 from __future__ import annotations
 import os
+from urllib.parse import urlparse
 from .errors import ConfigurationError
 from ._transport import Transport
 from .dataset import Dataset
@@ -14,6 +15,8 @@ ENVIRONMENTS = {
 }
 DEFAULT_BASE_URL = ENVIRONMENTS["production"]
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
 
 def _environment_url(name: str) -> str:
     try:
@@ -24,17 +27,34 @@ def _environment_url(name: str) -> str:
         ) from None
 
 
+def _validate_base_url(url: str) -> str:
+    """Reject base URLs that could exfiltrate the API key to an attacker-controlled
+    host: require https (http only for loopback), and forbid embedded credentials."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("https", "http"):
+        raise ConfigurationError(f"base_url must use http(s); got {url!r}")
+    if parsed.username or parsed.password or "@" in parsed.netloc:
+        raise ConfigurationError("base_url must not contain credentials (userinfo)")
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and host not in _LOOPBACK_HOSTS:
+        raise ConfigurationError(f"base_url must use https for non-loopback host {host!r}")
+    return url
+
+
 def resolve_base_url(base_url: str | None, environment: str | None) -> str:
     """Resolve the API base URL. Precedence (most specific first):
     explicit base_url > environment arg > TOPOLAB_BASE_URL > TOPOLAB_ENV > production.
+
+    User-supplied URLs (base_url arg, TOPOLAB_BASE_URL) are validated; the named
+    environments and the production default are trusted https constants.
     """
     if base_url:
-        return base_url.rstrip("/")
+        return _validate_base_url(base_url.rstrip("/"))
     if environment:
         return _environment_url(environment)
     env_base = os.environ.get("TOPOLAB_BASE_URL")
     if env_base:
-        return env_base.rstrip("/")
+        return _validate_base_url(env_base.rstrip("/"))
     env_name = os.environ.get("TOPOLAB_ENV")
     if env_name:
         return _environment_url(env_name)

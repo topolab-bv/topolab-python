@@ -63,3 +63,28 @@ def test_async_environment_staging(monkeypatch):
     monkeypatch.delenv("TOPOLAB_BASE_URL", raising=False)
     monkeypatch.delenv("TOPOLAB_ENV", raising=False)
     assert AsyncClient(api_key="k", environment="staging").base_url == "https://api-staging.topolab.nl"
+
+
+def test_base_url_rejects_plain_http_remote():
+    with pytest.raises(ConfigurationError):
+        Client(api_key="k", base_url="http://evil.example/api")
+
+
+def test_base_url_rejects_userinfo():
+    with pytest.raises(ConfigurationError):
+        Client(api_key="k", base_url="https://user:pass@evil.example")
+
+
+def test_base_url_rejects_non_http_scheme():
+    with pytest.raises(ConfigurationError):
+        Client(api_key="k", base_url="ftp://api.topolab.nl")
+
+
+def test_base_url_allows_loopback_http():
+    assert Client(api_key="k", base_url="http://127.0.0.1:8080").base_url == "http://127.0.0.1:8080"
+
+
+def test_topolab_base_url_env_is_validated(monkeypatch):
+    monkeypatch.setenv("TOPOLAB_BASE_URL", "http://evil.example")
+    with pytest.raises(ConfigurationError):
+        Client(api_key="k")
