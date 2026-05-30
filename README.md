@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://pypi.org/project/topolab/"><img src="https://img.shields.io/pypi/v/topolab?color=1E3A8A&label=PyPI" alt="PyPI version"></a>
   <a href="https://pypi.org/project/topolab/"><img src="https://img.shields.io/pypi/pyversions/topolab?color=1E3A8A" alt="Python versions"></a>
-  <a href="https://github.com/topolab/topolab-python/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/topolab/topolab-python/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://github.com/topolab-bv/topolab-python/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/topolab-bv/topolab-python/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="https://docs.topolab.nl"><img src="https://img.shields.io/badge/docs-topolab.nl-1E3A8A" alt="Documentation"></a>
 </p>

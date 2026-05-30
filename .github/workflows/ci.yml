@@ -9,7 +9,7 @@ jobs:
         with: { path: topolab-python }
       - name: Checkout sdk-spec (fixtures + conventions)
         uses: actions/checkout@v4
-        with: { repository: topolab/topolab-sdk-spec, path: topolab-sdk-spec }
+        with: { repository: topolab-bv/topolab-sdk-spec, path: topolab-sdk-spec }
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
       - run: pip install uv
