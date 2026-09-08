@@ -43,7 +43,7 @@ def test_raises_after_retries_exhausted():
 @respx.mock
 def test_403_not_retried_and_typed():
     route = respx.get(f"{BASE}/v1/dataset/nl-domino-poi/files/geojson").mock(
-        return_value=httpx.Response(403, json={"message": "This endpoint requires the API_ACCESS add-on"}))
+        return_value=httpx.Response(403, json={"message": "This endpoint requires the api-access add-on"}))
     with pytest.raises(AddonRequiredError):
         make().get_json("/v1/dataset/nl-domino-poi/files/geojson")
     assert route.call_count == 1

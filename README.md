@@ -88,6 +88,52 @@ gdf  = ds.to_geodataframe()            # GeoPandas GeoDataFrame  (needs [geo])
 path = ds.download("dominos.geojson")  # streamed to disk, never buffered
 ```
 
+### Pull everything you own
+
+```python
+# Discover what the organization licences, then pull each newest snapshot
+for ds in tl.datasets.iter_owned():
+    tl.dataset(ds.table).archive(f"{ds.table}.zip", month="latest", format="geojson")
+```
+
+One page at a time, with `total` counting every licensed dataset:
+
+```python
+page = tl.datasets.owned(limit=50)
+print(page.total, [d.table for d in page.items])
+```
+
+### Monthly archives
+
+```python
+ds = tl.dataset("nl-domino-poi")
+for a in ds.archives():                       # newest month first
+    print(a.month, a.formats)
+
+ds.archive("snapshot.zip", month="2026-07")   # "latest" | YYYY-MM | YYYY-MM-DD
+```
+
+Team plans see a trailing 12 months, Enterprise sees everything. A month that is
+not a real calendar value raises `ValueError` locally; a real month with no
+archive available is a `NotFoundError`.
+
+### Coordinates
+
+```python
+page = tl.dataset("nl-domino-poi").coordinates(limit=1000)
+print(page.total, page.returned, page.offset)
+print(page.rows[0].latitude, page.rows[0].longitude)   # strings, as returned
+```
+
+### SQL (Enterprise)
+
+```python
+res = tl.sql("SELECT city, count(*) AS n FROM nl_domino_poi GROUP BY 1", max_rows=100)
+print(res.columns, res.rows, res.elapsedMs)
+```
+
+Requires the `sql-access` entitlement, part of the Enterprise plan.
+
 ### Query features in an area (spatial, paged)
 
 ```python
@@ -125,6 +171,7 @@ Every failure raises a subclass of `TopolabError`, so you never parse raw JSON:
 | `AccessDeniedError` | dataset not accessible to your organization (403) |
 | `InsufficientCreditsError` | not enough credits — `.required` / `.available` (402) |
 | `NotFoundError` | unknown dataset (404) |
+| `QueryTimeoutError` | SQL exceeded the server statement timeout (408) |
 | `RateLimitError` | rate limited — `.retry_after`, retried automatically (429) |
 
 ```python

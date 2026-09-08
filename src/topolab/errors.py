@@ -3,7 +3,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_ADDON_RE = re.compile(r"requires the (\w+) add-?on", re.IGNORECASE)
+# Add-on identifiers are hyphenated slugs (api-access, archived-data, …) and the
+# message spells them either as the slug or in prose ("the Archived Data add-on"),
+# so the capture is non-greedy and normalised rather than \w+ (which stops at the
+# hyphen and therefore matched nothing).
+_ADDON_RE = re.compile(r"requires the (.+?) add-?on", re.IGNORECASE)
+
+
+def _addon_slug(raw: str) -> str:
+    return raw.strip().lower().replace(" ", "-")
 
 
 class TopolabError(Exception):
@@ -41,6 +49,9 @@ class InsufficientCreditsError(TopolabError):
         self.available = available
 
 
+class QueryTimeoutError(TopolabError): ...
+
+
 class RateLimitError(TopolabError):
     def __init__(self, message: str, *, retry_after: float | None = None, **kw):
         super().__init__(message, **kw)
@@ -58,7 +69,7 @@ def _body(resp) -> dict:
 def error_from_response(resp) -> TopolabError:
     body = _body(resp)
     msg = body.get("message") or body.get("error") or "request failed"
-    rid = (getattr(resp, "headers", {}) or {}).get("x-request-id")
+    rid = (getattr(resp, "headers", {}) or {}).get("x-request-id") or body.get("requestId")
     sc = resp.status_code
     common = dict(status_code=sc, request_id=rid, body=body)
     if sc == 401:
@@ -70,10 +81,12 @@ def error_from_response(resp) -> TopolabError:
     if sc == 403:
         m = _ADDON_RE.search(msg)
         if m:
-            return AddonRequiredError(msg, addon=m.group(1), **common)
+            return AddonRequiredError(msg, addon=_addon_slug(m.group(1)), **common)
         return AccessDeniedError(msg, **common)
     if sc == 404:
         return NotFoundError(msg, **common)
+    if sc == 408:
+        return QueryTimeoutError(msg, **common)
     if sc == 429:
         ra = body.get("retryAfter")
         hdr = (getattr(resp, "headers", {}) or {}).get("retry-after")
