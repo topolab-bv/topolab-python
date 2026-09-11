@@ -46,7 +46,7 @@ def test_items_uses_slug_directly(fx):
 @respx.mock
 def test_addon_error_on_download(fx):
     respx.get(f"{BASE}/v1/dataset/nl-domino-poi/files/geojson").mock(
-        return_value=httpx.Response(403, json={"message": "This endpoint requires the API_ACCESS add-on"}))
+        return_value=httpx.Response(403, json={"message": "This endpoint requires the api-access add-on"}))
     with pytest.raises(AddonRequiredError):
         Client(api_key="k", base_url=BASE).dataset("nl-domino-poi").to_geojson()
 

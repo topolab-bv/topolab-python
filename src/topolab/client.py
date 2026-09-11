@@ -6,6 +6,7 @@ from .errors import ConfigurationError
 from ._transport import Transport
 from .dataset import Dataset
 from .datasets import DatasetsNamespace
+from .models import SqlResult
 
 # Named API environments. Production is the shipped default; staging is one
 # keyword away. Self-hosting / tests can still pass an explicit base_url.
@@ -39,6 +40,13 @@ def _validate_base_url(url: str) -> str:
     if parsed.scheme == "http" and host not in _LOOPBACK_HOSTS:
         raise ConfigurationError(f"base_url must use https for non-loopback host {host!r}")
     return url
+
+
+def sql_body(query: str, max_rows: int | None) -> dict:
+    body: dict = {"sql": query}
+    if max_rows is not None:
+        body["maxRows"] = max_rows
+    return body
 
 
 def resolve_base_url(base_url: str | None, environment: str | None) -> str:
@@ -77,6 +85,13 @@ class Client:
 
     def dataset(self, slug: str) -> Dataset:
         return Dataset(self._t, slug)
+
+    def sql(self, query: str, *, max_rows: int | None = None) -> SqlResult:
+        """Run one read-only SELECT across the datasets you licence. Spans
+        datasets, so it lives on the client rather than a dataset handle.
+        Requires the `sql-access` entitlement, part of the Enterprise plan."""
+        resp = self._t.request("POST", "/v1/sql/query", json=sql_body(query, max_rows))
+        return SqlResult.model_validate(resp.json())
 
     def close(self) -> None:
         self._t.close()
