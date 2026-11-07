@@ -259,3 +259,33 @@ def test_sql_timeout_maps_to_query_timeout():
         return_value=httpx.Response(408, json={"code": 408, "message": "Query exceeded the time limit"}))
     with pytest.raises(QueryTimeoutError):
         client().sql("SELECT pg_sleep(60)")
+
+
+@respx.mock
+def test_sql_string_code_reaches_the_caller():
+    respx.post(f"{BASE}/v1/sql/query").mock(return_value=httpx.Response(400, json={
+        "path": "/v1/sql/query", "method": "POST", "code": "SQL_DATA_ERROR",
+        "message": "The query raised a data error (SQLSTATE 22P02) while evaluating a value.",
+        "time": "2026-11-07T11:52:28.000Z", "requestId": "3c5e7a9b"}))
+    from topolab.errors import ValidationError
+    with pytest.raises(ValidationError) as e:
+        client().sql("SELECT 'x'::int")
+    assert e.value.code == "SQL_DATA_ERROR"
+    assert e.value.status == 400
+    assert e.value.request_id == "3c5e7a9b"
+
+
+@respx.mock
+def test_spending_limit_string_code_with_details_through_the_client():
+    respx.post(f"{BASE}/v1/sql/query").mock(return_value=httpx.Response(403, json={
+        "path": "/v1/sql/query", "method": "POST", "code": "SPENDING_LIMIT_EXCEEDED",
+        "message": "Organization monthly spending limit exceeded",
+        "details": {"limit": 5000, "consumed": 4995, "remaining": 5,
+                    "periodEnd": "2026-11-30T23:59:59.999Z"},
+        "time": "2026-11-07T11:52:28.000Z", "requestId": "8f0c41d2"}))
+    from topolab.errors import AccessDeniedError
+    with pytest.raises(AccessDeniedError) as e:
+        client().sql("SELECT 1")
+    assert e.value.code == "SPENDING_LIMIT_EXCEEDED"
+    assert e.value.status == 403
+    assert e.value.details["remaining"] == 5

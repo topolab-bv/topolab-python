@@ -4,7 +4,7 @@ from .async_client import AsyncClient
 from .errors import (
     TopolabError, AuthenticationError, AddonRequiredError, AccessDeniedError,
     InsufficientCreditsError, NotFoundError, ConfigurationError, RateLimitError,
-    ValidationError, ServerError, ConnectionError, QueryTimeoutError,
+    ValidationError, ServerError, ConnectionError, QueryTimeoutError, ErrorCode,
 )
 
 __all__ = [
@@ -12,4 +12,5 @@ __all__ = [
     "TopolabError", "AuthenticationError", "AddonRequiredError", "AccessDeniedError",
     "InsufficientCreditsError", "NotFoundError", "ConfigurationError", "RateLimitError",
     "ValidationError", "ServerError", "ConnectionError", "QueryTimeoutError",
+    "ErrorCode",
 ]
