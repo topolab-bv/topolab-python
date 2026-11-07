@@ -183,6 +183,11 @@ except AddonRequiredError as e:
     print("Your key needs the add-on:", e.addon)
 ```
 
+Every error from a response also carries `.status` (the HTTP status), `.code`
+(a string such as `"SPENDING_LIMIT_EXCEEDED"` when the error has its own code,
+otherwise the numeric status) and `.details` (extra fields, when present). See
+[docs/errors.md](docs/errors.md) for the known codes.
+
 ## Documentation
 
 - **Full docs:** [docs.topolab.nl](https://docs.topolab.nl)

@@ -6,7 +6,7 @@ Every failure raises a subclass of `TopolabError`, so you never parse raw JSON.
 |---|---|
 | `AuthenticationError` | missing or invalid API key (401) |
 | `AddonRequiredError` | key lacks the add-on — `.addon` names it (403) |
-| `AccessDeniedError` | dataset not accessible to your organization (403) |
+| `AccessDeniedError` | dataset not accessible to your organization, or the monthly spending limit is reached (`code == "SPENDING_LIMIT_EXCEEDED"`) (403) |
 | `InsufficientCreditsError` | not enough credits — `.required` / `.available` (402) |
 | `NotFoundError` | unknown dataset or collection (404) |
 | `ValidationError` | invalid request parameters (400/4xx) |
@@ -37,9 +37,79 @@ filter:
   "time": "2026-09-08T23:42:15.819Z", "requestId": "25c2a6a1…" }
 ```
 
-There is **no `statusCode` field** — the SDK maps errors from the HTTP status,
-never from a body field. `request_id` comes from the `X-Request-Id` header and
-falls back to the body's `requestId`; quote it in support requests.
+```json
+{ "code": "SPENDING_LIMIT_EXCEEDED",
+  "message": "Organization monthly spending limit exceeded",
+  "details": { "limit": 5000, "consumed": 4995, "remaining": 5,
+               "periodEnd": "2026-11-30T23:59:59.999Z" },
+  "path": "/v1/dataset/{table}/files/geojson", "method": "GET",
+  "time": "2026-11-07T11:52:28.000Z", "requestId": "8f0c41d2…" }
+```
+
+There is **no `statusCode` field**. `code` is a **string** when the error has its
+own code (upper-snake, such as `SPENDING_LIMIT_EXCEEDED`) and otherwise the
+**numeric HTTP status**, so it does not always equal the status. The SDK chooses
+the error class from the HTTP status, never from a body field, and `code` refines
+the meaning inside a class: a 403 with `SPENDING_LIMIT_EXCEEDED` is still an
+`AccessDeniedError`.
+
+Every error built from a response carries:
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `status` | `int` | HTTP status of the response. Use this for numeric checks. |
+| `status_code` | `int` | Same value as `status`, kept for code written against 0.1. |
+| `code` | `str` or `int` (`topolab.ErrorCode`) | The envelope's `code`; the HTTP status when the body has none (for example a proxy's error page). |
+| `details` | `dict` or `None` | The envelope's allow-listed `details`, when present. |
+| `request_id` | `str` or `None` | The `X-Request-Id` header, falling back to the body's `requestId`; quote it in support requests. |
+| `body` | `dict` | The decoded response body. |
+
+Errors raised before a response exists (`ConnectionError`, or a
+`ConfigurationError` raised by the client itself) have `status`, `code` and
+`details` set to `None`.
+
+```python
+from topolab import Client, AccessDeniedError
+
+tl = Client()
+try:
+    tl.dataset("nl-domino-poi").download("poi.geojson")
+except AccessDeniedError as e:
+    if e.code == "SPENDING_LIMIT_EXCEEDED":
+        print("Monthly limit reached; resets at", e.details["periodEnd"])
+    else:
+        raise
+```
+
+Compare string codes by equality. If you used to read `body["code"]` as the HTTP
+status, read `e.status` instead.
+
+## Known string codes
+
+Codes this SDK's calls can return:
+
+| Status | `code` | Raised as | Meaning | `details` |
+|---|---|---|---|---|
+| 403 | `SPENDING_LIMIT_EXCEEDED` | `AccessDeniedError` | A metered call (download, SQL) would pass the organization's monthly spending limit. | `limit`, `consumed`, `remaining` (numbers), `periodEnd` (ISO 8601 timestamp) |
+| 400 | `SQL_DATA_ERROR` | `ValidationError` | The SQL query raised a data error while evaluating a value, such as a bad cast. The message names the SQLSTATE. | none |
+| 400 | `MAX_NODES_EXCEEDED`, `MAX_DEPTH_EXCEEDED`, `MAX_ARRAY_LENGTH_EXCEEDED`, `MAX_KEYS_EXCEEDED` | `ValidationError` | A JSON request body is larger or deeper than the server accepts. | none |
+| 400 | `PROTOTYPE_POLLUTION_KEY` | `ValidationError` | A JSON request body contains a forbidden key (`__proto__`, `constructor`, `prototype`). | none |
+
+Numeric codes that carry `details`:
+
+| `code` | Raised as | `details` |
+|---|---|---|
+| `402` | `InsufficientCreditsError` (also on `.required` / `.available`) | `required`, `available` |
+| `413` | `ValidationError` | `quotaBytes`, `usageBytes`, `additionalBytes` (Data Studio uploads) |
+
+Other parts of the API use further codes, listed in the
+[SDK conventions](https://github.com/topolab-bv/topolab-sdk-spec/blob/main/conventions.md#known-string-codes):
+`HIGH_VALUE_DATA_REQUIRED` (403, `details.columns` / `details.datasetIds`),
+`REGENERATE_REQUIRED` (410) and `METADATA_NOT_READABLE` (400) from Data Studio,
+`SSO_REQUIRED` (403) and `SSO_CHECK_UNAVAILABLE` (503) from sign-in, and the
+order add-on and delivery-destination codes. The chat API reports a failed turn
+on its event stream with lower-snake codes such as `ai_busy`, `ai_interrupted`
+and `ai_cancelled`; this SDK does not call it.
 
 ## Add-on requirements
 
