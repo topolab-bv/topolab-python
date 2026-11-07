@@ -172,3 +172,97 @@ def test_client_side_errors_have_no_status_or_code():
     err = ConfigurationError("No API key")
     assert err.status is None and err.status_code is None
     assert err.code is None and err.details is None
+
+
+# --- the engine's validation errors carry a list of messages ---
+
+VALIDATION_LIST = {
+    "path": "/v1/dataset/owned", "method": "GET", "code": 400,
+    "message": ["limit must not be greater than 200", "offset must not be less than 0"],
+    "time": "2026-11-07T11:52:28.000Z", "requestId": "a1b2c3d4",
+}
+
+
+def test_a_list_message_does_not_crash_and_is_joined():
+    err = error_from_response(FakeResp(400, VALIDATION_LIST))
+    assert isinstance(err, ValidationError)
+    assert err.message == "limit must not be greater than 200; offset must not be less than 0"
+    assert str(err) == err.message
+    assert err.messages == ["limit must not be greater than 200", "offset must not be less than 0"]
+    assert err.status == 400 and err.code == 400
+
+
+def test_a_list_message_naming_the_organization_is_a_configuration_error():
+    err = error_from_response(FakeResp(400, {"code": 400, "message": ["API key is not organization-scoped"]}))
+    assert isinstance(err, ConfigurationError)
+    assert err.messages == ["API key is not organization-scoped"]
+
+
+def test_a_list_message_on_a_403_still_finds_the_addon():
+    err = error_from_response(FakeResp(403, {"code": 403, "message": ["This endpoint requires the api-access add-on"]}))
+    assert isinstance(err, AddonRequiredError)
+    assert err.addon == "api-access"
+
+
+def test_a_string_message_gives_a_one_item_messages_list():
+    err = error_from_response(FakeResp(404, {"code": 404, "message": "not found"}))
+    assert err.message == "not found"
+    assert err.messages == ["not found"]
+
+
+def test_an_empty_list_message_falls_back():
+    err = error_from_response(FakeResp(400, {"code": 400, "message": [], "error": "Bad Request"}))
+    assert isinstance(err, ValidationError)
+    assert err.message == "Bad Request"
+
+
+# --- 429s since engine #650: a string code, details and a Retry-After header ---
+
+RATE_LIMITED = {
+    "path": "/v1/dataset/nl-domino-poi/files/geojson", "method": "GET",
+    "code": "RATE_LIMIT_EXCEEDED", "message": "Rate limit exceeded",
+    "details": {"retryAfter": 42, "limit": 300, "remaining": 0,
+                "resetAt": "2026-11-07T12:01:00.000Z"},
+    "time": "2026-11-07T12:00:18.000Z", "requestId": "r429",
+}
+
+QUOTA_EXCEEDED = {
+    "path": "/v1/dataset/nl-domino-poi/files/geojson", "method": "GET",
+    "code": "USAGE_QUOTA_EXCEEDED", "message": "API key usage quota exceeded",
+    "details": {"quota": 10, "used": 10},
+    "time": "2026-11-07T12:00:18.000Z", "requestId": "q429",
+}
+
+
+def test_429_takes_retry_after_from_details():
+    err = error_from_response(FakeResp(429, RATE_LIMITED))
+    assert isinstance(err, RateLimitError)
+    assert err.code == "RATE_LIMIT_EXCEEDED"
+    assert err.retry_after == 42
+    assert err.details["limit"] == 300 and err.details["remaining"] == 0
+
+
+def test_429_prefers_the_retry_after_header():
+    err = error_from_response(FakeResp(429, RATE_LIMITED, headers={"retry-after": "43"}))
+    assert err.retry_after == 43
+
+
+def test_429_accepts_an_http_date_retry_after_header():
+    import email.utils
+    import time
+    when = email.utils.formatdate(time.time() + 120, usegmt=True)
+    err = error_from_response(FakeResp(429, {"code": 429, "message": "x"}, headers={"retry-after": when}))
+    assert 100 <= err.retry_after <= 121
+
+
+def test_429_ignores_an_unparseable_retry_after_header():
+    err = error_from_response(FakeResp(429, RATE_LIMITED, headers={"retry-after": "soon"}))
+    assert err.retry_after == 42
+
+
+def test_429_usage_quota_has_no_wait_but_keeps_its_details():
+    err = error_from_response(FakeResp(429, QUOTA_EXCEEDED))
+    assert isinstance(err, RateLimitError)
+    assert err.code == "USAGE_QUOTA_EXCEEDED"
+    assert err.retry_after is None
+    assert err.details == {"quota": 10, "used": 10}

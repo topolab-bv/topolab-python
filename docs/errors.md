@@ -11,7 +11,7 @@ Every failure raises a subclass of `TopolabError`, so you never parse raw JSON.
 | `NotFoundError` | unknown dataset or collection (404) |
 | `ValidationError` | invalid request parameters (400/4xx) |
 | `QueryTimeoutError` | SQL query exceeded the server statement timeout (408) |
-| `RateLimitError` | rate limited — `.retry_after`, retried automatically (429) |
+| `RateLimitError` | rate limited (`code` `RATE_LIMIT_EXCEEDED`) or the key's usage quota is used up (`USAGE_QUOTA_EXCEEDED`) — `.retry_after`, retried automatically (429) |
 | `ConfigurationError` | client misconfiguration (e.g. missing/invalid key or base URL) |
 | `ServerError` | upstream error (5xx), retried automatically |
 | `ConnectionError` | network failure / timeout after retries |
@@ -63,6 +63,7 @@ Every error built from a response carries:
 | `details` | `dict` or `None` | The envelope's allow-listed `details`, when present. |
 | `request_id` | `str` or `None` | The `X-Request-Id` header, falling back to the body's `requestId`; quote it in support requests. |
 | `body` | `dict` | The decoded response body. |
+| `messages` | `list[str]` | Every message. Request validation sends a list, which `message` joins with `"; "`; a single message gives a one-item list. |
 
 Errors raised before a response exists (`ConnectionError`, or a
 `ConfigurationError` raised by the client itself) have `status`, `code` and
@@ -94,6 +95,8 @@ Codes this SDK's calls can return:
 | 400 | `SQL_DATA_ERROR` | `ValidationError` | The SQL query raised a data error while evaluating a value, such as a bad cast. The message names the SQLSTATE. | none |
 | 400 | `MAX_NODES_EXCEEDED`, `MAX_DEPTH_EXCEEDED`, `MAX_ARRAY_LENGTH_EXCEEDED`, `MAX_KEYS_EXCEEDED` | `ValidationError` | A JSON request body is larger or deeper than the server accepts. | none |
 | 400 | `PROTOTYPE_POLLUTION_KEY` | `ValidationError` | A JSON request body contains a forbidden key (`__proto__`, `constructor`, `prototype`). | none |
+| 429 | `RATE_LIMIT_EXCEEDED` | `RateLimitError` | The API key passed its per-minute rate limit. The response also carries a `Retry-After` header. | `retryAfter` (seconds), `limit`, `remaining` (numbers), `resetAt` (ISO 8601 timestamp) |
+| 429 | `USAGE_QUOTA_EXCEEDED` | `RateLimitError` | The API key has used up its usage quota. Waiting does not help; `.retry_after` is `None`. | `quota`, `used` (numbers) |
 
 Numeric codes that carry `details`:
 
@@ -137,6 +140,12 @@ months that have not started, which are deliberately indistinguishable.
 ## Retries
 
 Transient failures (`429`, `500`, `502`, `503`, `504`) and network errors are
-retried with exponential backoff, honouring a `Retry-After` header or
-`retryAfter` body field when present. `max_retries` (default 3) is the number of
-retries **after** the first attempt.
+retried with exponential backoff. When the server says how long to wait, the SDK
+waits that long instead, reading in order:
+
+1. the `Retry-After` header (seconds, or an HTTP date);
+2. `details.retryAfter` (seconds);
+3. a top-level `retryAfter`, sent by engines older than the `RATE_LIMIT_EXCEEDED` code.
+
+`RateLimitError.retry_after` holds the same value. `max_retries` (default 3) is
+the number of retries **after** the first attempt.

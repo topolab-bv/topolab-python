@@ -1,6 +1,9 @@
 """Typed error hierarchy mapped from API responses (status + body)."""
 from __future__ import annotations
+import email.utils
+import math
 import re
+import time
 from typing import Any, Union
 
 #: The error envelope's ``code``: a string such as ``"SPENDING_LIMIT_EXCEEDED"``
@@ -34,14 +37,19 @@ class TopolabError(Exception):
         details: the envelope's allow-listed ``details`` dict, or ``None``.
         request_id: the ``X-Request-Id`` header, else the body's ``requestId``.
         body: the decoded response body.
+        messages: every message as a list. The engine's request validation
+            sends a list of messages; ``message`` joins them with ``"; "``.
+            A single message gives a one-item list.
     """
 
     def __init__(self, message: str, *, status: int | None = None,
                  status_code: int | None = None, code: ErrorCode | None = None,
                  details: dict[str, Any] | None = None,
-                 request_id: str | None = None, body: Any = None):
+                 request_id: str | None = None, body: Any = None,
+                 messages: list[str] | None = None):
         super().__init__(message)
         self.message = message
+        self.messages = list(messages) if messages is not None else [message]
         self.status = status if status is not None else status_code
         self.code = code
         self.details = details
@@ -120,15 +128,91 @@ def _details(body: dict) -> dict[str, Any] | None:
     return details if isinstance(details, dict) else None
 
 
+def _messages(body: dict) -> list[str]:
+    """The body's message(s) as a list. The engine's request validation sends
+    ``message`` as a list of strings; everything else sends one string."""
+    raw = body.get("message")
+    if isinstance(raw, list):
+        items = [str(m) for m in raw if m is not None and str(m) != ""]
+    elif raw is not None and raw != "":
+        items = [str(raw)]
+    else:
+        items = []
+    if not items:
+        fallback = body.get("error")
+        items = [str(fallback)] if fallback else ["request failed"]
+    return items
+
+
+def _seconds(value: Any) -> float | None:
+    """A non-negative, finite number of seconds, or None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        seconds = float(value)
+    elif isinstance(value, str):
+        try:
+            seconds = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _header_seconds(value: str | None) -> float | None:
+    """A ``Retry-After`` header as seconds: delay-seconds or an HTTP-date
+    (RFC 9110, section 10.2.3)."""
+    if not value:
+        return None
+    seconds = _seconds(value)
+    if seconds is not None:
+        return seconds
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when is None:
+        return None
+    return max(0.0, when.timestamp() - time.time())
+
+
+def retry_after_seconds(headers: Any, body: Any) -> float | None:
+    """How long the server asked the client to wait, in seconds, or None.
+
+    The ``Retry-After`` header comes first: the engine sends it on every 429
+    that carries a wait, rounded up to whole seconds. Then ``details.retryAfter``
+    (engine #650 and later), then a top-level ``retryAfter`` from older engines.
+    """
+    header = None
+    if headers is not None:
+        try:
+            header = headers.get("retry-after")
+        except AttributeError:
+            header = None
+    seconds = _header_seconds(header)
+    if seconds is not None:
+        return seconds
+    if isinstance(body, dict):
+        details = body.get("details")
+        if isinstance(details, dict):
+            seconds = _seconds(details.get("retryAfter"))
+            if seconds is not None:
+                return seconds
+        return _seconds(body.get("retryAfter"))
+    return None
+
+
 def error_from_response(resp) -> TopolabError:
     body = _body(resp)
-    msg = body.get("message") or body.get("error") or "request failed"
+    messages = _messages(body)
+    msg = "; ".join(messages)
     rid = (getattr(resp, "headers", {}) or {}).get("x-request-id") or body.get("requestId")
     sc = resp.status_code
     # The class is chosen from the HTTP status; `code` only refines it (a 403
     # with SPENDING_LIMIT_EXCEEDED is still an AccessDeniedError).
     common = dict(status=sc, code=_code(body, sc), details=_details(body),
-                  request_id=rid, body=body)
+                  request_id=rid, body=body, messages=messages)
     if sc == 401:
         return AuthenticationError(msg, **common)
     if sc == 402:
@@ -145,11 +229,9 @@ def error_from_response(resp) -> TopolabError:
     if sc == 408:
         return QueryTimeoutError(msg, **common)
     if sc == 429:
-        ra = body.get("retryAfter")
-        hdr = (getattr(resp, "headers", {}) or {}).get("retry-after")
         return RateLimitError(
             msg,
-            retry_after=ra if ra is not None else (float(hdr) if hdr else None),
+            retry_after=retry_after_seconds(getattr(resp, "headers", None), body),
             **common,
         )
     if sc == 400:

@@ -7,7 +7,7 @@ import pathlib
 from typing import Any
 import httpx
 from ._version import __version__
-from .errors import error_from_response, ConnectionError as TLConnError
+from .errors import error_from_response, retry_after_seconds, ConnectionError as TLConnError
 
 USER_AGENT = f"topolab-python/{__version__} (+https://docs.topolab.nl)"
 _RETRY_STATUS = {429, 500, 502, 503, 504}
@@ -36,16 +36,11 @@ class Transport:
         if resp is not None:
             try:
                 body = resp.json()
-                if isinstance(body, dict) and body.get("retryAfter") is not None:
-                    return float(body["retryAfter"])
             except Exception:
-                pass
-            hdr = resp.headers.get("retry-after")
-            if hdr:
-                try:
-                    return float(hdr)
-                except ValueError:
-                    pass
+                body = None
+            wait = retry_after_seconds(resp.headers, body)
+            if wait is not None:
+                return wait
         return self._backoff_base * (2 ** attempt)
 
     # --- sync ---

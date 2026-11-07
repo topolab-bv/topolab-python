@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1]
+- Fixed: a 400 whose `message` is a list (the engine's request validation)
+  crashed with `AttributeError: 'list' object has no attribute 'lower'` instead
+  of raising an SDK error. `message` now joins the list with `"; "`, and the new
+  `TopolabError.messages` keeps every message as a list (one item for a plain
+  message). Add-on and configuration detection read the joined text.
+- 429 handling follows the engine's `RATE_LIMIT_EXCEEDED` and
+  `USAGE_QUOTA_EXCEEDED` codes. The wait is read from the `Retry-After` header
+  (seconds or an HTTP date), then `details.retryAfter`, then the older top-level
+  `retryAfter`; `RateLimitError.retry_after` and the retry delay use the same
+  rule. A `Retry-After` header that is neither a number nor a date is ignored
+  instead of raising `ValueError`.
+- `docs/errors.md` lists both 429 codes and their `details`.
+
 ## [0.2.0]
 - **Errors expose `status`, `code` and `details`.** The engine's error envelope
   now carries a string `code` when the error has its own (upper-snake, such as
