@@ -13,6 +13,9 @@
   rule. A `Retry-After` header that is neither a number nor a date is ignored
   instead of raising `ValueError`.
 - `docs/errors.md` lists both 429 codes and their `details`.
+- `docs/errors.md` names the chat API's stream error codes in upper-snake case
+  (`AI_BUSY`, `AI_INTERRUPTED`, `AI_CANCELLED`), matching the engine, which
+  renamed every chat error code from lower-snake.
 
 ## [0.2.0]
 - **Errors expose `status`, `code` and `details`.** The engine's error envelope
