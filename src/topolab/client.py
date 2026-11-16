@@ -12,7 +12,7 @@ from .models import SqlResult
 # keyword away. Self-hosting / tests can still pass an explicit base_url.
 ENVIRONMENTS = {
     "production": "https://api.topolab.nl",
-    "staging": "https://api-staging.topolab.nl",
+    "staging": "https://api.topolab.dev",
 }
 DEFAULT_BASE_URL = ENVIRONMENTS["production"]
 

@@ -48,7 +48,7 @@ The client targets **production** (`https://api.topolab.nl`) by default. Switch 
 the `environment` option:
 
 ```python
-tl = Client(api_key="tlb_staging_...", environment="staging")  # https://api-staging.topolab.nl
+tl = Client(api_key="tlb_staging_...", environment="staging")  # https://api.topolab.dev
 ```
 
 Or set `TOPOLAB_ENV=staging`. An explicit `base_url` always wins. Precedence:
