@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- The staging base URL is now `https://api.topolab.dev` (was
+  `https://api-staging.topolab.nl`). `environment="staging"` resolves to it.
+
 ## [0.2.1]
 - Fixed: a 400 whose `message` is a list (the engine's request validation)
   crashed with `AttributeError: 'list' object has no attribute 'lower'` instead
