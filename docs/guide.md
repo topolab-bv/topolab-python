@@ -49,25 +49,43 @@ Team plans see a trailing 12 months of archives; Enterprise and full-history
 add-ons see everything. `archives()` already reflects your window, so it never
 lists a month that would 404.
 
-## Coordinates
+## Coordinates as flat rows
 
-Rows arrive as a bare array and the paging facts arrive as response headers; the
-SDK folds both into one object.
+Rows arrive as a bare array, ordered by `id`, and the paging facts arrive as
+response headers; the SDK folds both into one object.
 
 ```python
 page = tl.dataset("nl-domino-poi").coordinates(limit=1000, offset=0)
 print(page.total, page.returned, page.offset)
 row = page.rows[0]
-print(row.latitude, row.longitude)     # strings, kept exactly as returned
-print(row.location, row.metadata)
+print(row.id, row.latitude, row.longitude)   # latitude/longitude are floats
+print(row.geo_type, row.geometry)            # "POINT", a GeoJSON Point
+print(row.city, row.model_extra)             # the dataset's columns
 ```
 
 `limit` caps at 50000. Omit both parameters to take the whole dataset in one
 response, up to that cap.
 
-`latitude` and `longitude` are fixed-scale decimal strings (`"51.49638600"`) and
-are never parsed as floats — that would drop the trailing zeros and risk
-representation drift. Convert them yourself when you need numbers.
+Each row is the free sample's row for your tier plus the record's `id`. The
+fixed keys (`id`, `latitude`, `longitude`, `geo_type`, `geometry`) are typed
+fields; every other key is one of the dataset's columns, kept as it arrived and
+readable as an attribute or from `row.model_extra`. The dataset detail
+(`GET /v1/dataset/{table}`) describes the columns in `columns`. An empty value is
+`None` and a list (`tags`, `category_path`) is a list. `latitude` and
+`longitude` are `None` for a record with no position.
+
+`row.model_dump()` returns the row in the API's column order: `id` first,
+`latitude` and `longitude` directly after `location_name`, `geo_type` after the
+dataset's columns, and `geometry` last. A table of rows keeps that order:
+
+```python
+import pandas as pd
+df = pd.DataFrame([r.model_dump(exclude={"geometry"}) for r in page.rows])
+```
+
+The advanced columns (such as `phone`, `email`, `website`, `hours`, `services`)
+appear only if your organization holds the High-Value Data add-on for the
+dataset.
 
 ## SQL (Enterprise)
 

@@ -117,13 +117,18 @@ Team plans see a trailing 12 months, Enterprise sees everything. A month that is
 not a real calendar value raises `ValueError` locally; a real month with no
 archive available is a `NotFoundError`.
 
-### Coordinates
+### Coordinates as flat rows
 
 ```python
 page = tl.dataset("nl-domino-poi").coordinates(limit=1000)
 print(page.total, page.returned, page.offset)
-print(page.rows[0].latitude, page.rows[0].longitude)   # strings, as returned
+row = page.rows[0]
+print(row.latitude, row.longitude)   # floats, None for a record with no position
+print(row.city)                      # the dataset's columns sit on the row itself
+print(row.model_dump())              # the whole row, in the API's column order
 ```
+
+Each row is the free sample's row for your tier plus the record's `id`.
 
 ### SQL (Enterprise)
 

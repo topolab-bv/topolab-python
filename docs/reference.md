@@ -39,7 +39,7 @@ Client(
 | `.iter_items(*, page_size=100, total_limit=None, bbox, category, city, country)` | iterator of `dict` | Auto-paginates |
 | `.archives()` | `list[Archive]` | Available monthly archives, newest first |
 | `.archive(path, *, month="latest", format="geojson")` | `str` | Streams one monthly archive (zip) to `path` |
-| `.coordinates(*, limit=None, offset=None)` | `CoordinatePage` | Coordinate rows; `limit` ≤ 50000, `offset` ≥ 0 |
+| `.coordinates(*, limit=None, offset=None)` | `CoordinatePage` | Flat rows, one per record; `limit` ≤ 50000, `offset` ≥ 0 |
 
 On `AsyncClient`, every `Dataset` method is awaitable and `iter_items` is an
 async iterator.
@@ -60,7 +60,7 @@ step.
 | `OwnedDatasetLinks` | `current`, `archives`, `latestArchive` — absolute URLs; `current` and `latestArchive` contain a literal `{format}` placeholder, and `latestArchive` is `None` when no archive is in range |
 | `Archive` | `month` (`YYYY-MM`), `formats`, `archiveDate` |
 | `CoordinatePage` | `rows: list[CoordinateRow]`, `total`, `returned`, `offset` — the counts come from the `X-Total-Count` / `X-Returned-Count` / `X-Offset` response headers |
-| `CoordinateRow` | `id`, `location` (GeoJSON geometry), `latitude`, `longitude`, `metadata` — `latitude`/`longitude` are **strings**, kept verbatim (a numeric value is stringified, never parsed as a float) |
+| `CoordinateRow` | One flat row: `id`, `latitude` and `longitude` (`float` or `None`), `geo_type` (`"POINT"`), `geometry` (GeoJSON Point), and the dataset's columns as extra fields (`row.city`, `row.model_extra`). `model_dump()` keeps the API's column order |
 | `SqlResult` | `columns`, `rows`, `rowCount`, `truncated`, `elapsedMs`, `datasets` |
 
 Models ignore nothing: unknown fields the API adds later are preserved rather
