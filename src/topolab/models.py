@@ -6,7 +6,7 @@ can regenerate a superset; these focused models are what the client uses.
 """
 from __future__ import annotations
 from typing import Any
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, model_serializer, model_validator
 
 
 class _Loose(BaseModel):
@@ -66,21 +66,48 @@ class Archive(_Loose):
 
 
 class CoordinateRow(_Loose):
-    # latitude/longitude arrive as fixed-scale decimal strings ("51.49638600")
-    # and are kept verbatim: parsing them as floats would drop the trailing
-    # zeros and risk representation drift.
-    id: str | None = None
-    location: dict[str, Any] | None = None
-    latitude: str | None = None
-    longitude: str | None = None
-    metadata: dict[str, Any] | None = None
+    """One record of the coordinates route as a flat row: the free sample's row
+    for your tier plus the record's ``id``.
 
-    @field_validator("latitude", "longitude", mode="before")
+    The fixed keys are typed fields. Every other key is one of the dataset's
+    columns, kept as it arrived: read it as an attribute (``row.city``) or from
+    ``row.model_extra``. The columns vary per dataset and tier; the dataset
+    detail (``GET /v1/dataset/{table}``) describes them in ``columns``. An empty
+    value is ``None`` and a list (``tags``, ``category_path``) is a list.
+
+    ``model_dump()`` returns the whole row in the order the API sent it: ``id``
+    first, ``latitude`` and ``longitude`` directly after ``location_name``,
+    ``geo_type`` after the dataset's columns, and ``geometry`` last.
+    """
+    id: str
+    # WGS 84, None for a record with no position. Decimal text from an older
+    # server is read as a number too.
+    latitude: float | None = None
+    longitude: float | None = None
+    # The served geometry's type in upper case: "POINT" on this route.
+    geo_type: str | None = None
+    # GeoJSON Point, coordinates [longitude, latitude].
+    geometry: dict[str, Any] | None = None
+
+    _keys: list[str] = PrivateAttr(default_factory=list)
+
+    @model_validator(mode="wrap")
     @classmethod
-    def _stringify_numbers(cls, v):
-        # Tolerate a numeric response rather than failing the whole page;
-        # anything else passes through to the declared type.
-        return str(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+    def _remember_key_order(cls, data: Any, handler):
+        row = handler(data)
+        if isinstance(data, dict):
+            row._keys = list(data)
+        return row
+
+    @model_serializer(mode="wrap")
+    def _dump_in_key_order(self, handler):
+        # Declared fields would otherwise come first and the dataset's columns
+        # after them; put every key back where the API sent it.
+        out = handler(self)
+        if not isinstance(out, dict):
+            return out
+        known = [k for k in self._keys if k in out]
+        return {k: out[k] for k in known + [k for k in out if k not in self._keys]}
 
 
 class CoordinatePage(BaseModel):

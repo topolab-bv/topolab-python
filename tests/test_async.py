@@ -135,7 +135,7 @@ async def test_async_coordinates_reads_headers(fx_owned):
     async with AsyncClient(api_key="k", base_url=BASE) as tl:
         page = await tl.dataset(TABLE).coordinates(limit=2, offset=10)
     assert page.total == 119 and page.returned == 2 and page.offset == 10
-    assert page.rows[0].latitude == "51.49638600"
+    assert page.rows[0].latitude == 51.496386 and page.rows[0].city == "Middelburg"
 
 
 @respx.mock

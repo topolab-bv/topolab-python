@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import respx
 import pytest
@@ -177,13 +179,41 @@ def test_coordinates_reads_paging_headers(fx_owned):
 
 
 @respx.mock
-def test_coordinates_keeps_lat_lon_as_strings(fx_owned):
+def test_coordinates_rows_are_flat(fx_owned):
     respx.get(f"{BASE}/v1/dataset/{TABLE}/coordinates").mock(
         return_value=httpx.Response(200, json=fx_owned("coordinates.json")))
     row = client().dataset(TABLE).coordinates().rows[0]
-    assert row.latitude == "51.49638600" and row.longitude == "3.65532100"
-    assert row.location["type"] == "Point"
-    assert row.metadata["city"] == "Middelburg"
+    assert row.id == "02be5c77-fe43-44ca-878a-48cddddde98c"
+    assert row.latitude == 51.496386 and row.longitude == 3.655321
+    assert isinstance(row.latitude, float) and isinstance(row.longitude, float)
+    assert row.geo_type == "POINT"
+    assert row.geometry == {"type": "Point", "coordinates": [3.655321, 51.496386]}
+    # The dataset's columns sit on the row itself.
+    assert row.city == "Middelburg" and row.street == "Amp\u00e8reweg"
+    assert row.model_extra["city"] == "Middelburg"
+    assert row.tags == [] and row.category_path == [] and row.unit is None
+    dumped = row.model_dump()
+    for gone in ("metadata", "location", "datasetId", "dataset"):
+        assert gone not in dumped
+
+
+@respx.mock
+def test_coordinates_rows_keep_the_api_key_order(fx_owned):
+    rows = fx_owned("coordinates.json")
+    respx.get(f"{BASE}/v1/dataset/{TABLE}/coordinates").mock(
+        return_value=httpx.Response(200, json=rows))
+    page = client().dataset(TABLE).coordinates()
+    for got, sent in zip(page.rows, rows):
+        keys = list(got.model_dump())
+        assert keys == list(sent)
+        assert keys[0] == "id" and keys[-1] == "geometry"
+        at = keys.index("location_name")
+        assert keys[at + 1:at + 3] == ["latitude", "longitude"]
+        # The row round-trips to exactly what the API sent, in its order.
+        assert got.model_dump() == sent
+        assert list(json.loads(got.model_dump_json())) == list(sent)
+    # A page dumps its rows in the same order.
+    assert list(page.model_dump()["rows"][0]) == list(rows[0])
 
 
 @respx.mock
@@ -204,13 +234,24 @@ def test_coordinates_with_unparseable_headers_falls_back(fx_owned):
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ("51.49638600", "51.49638600"),   # what the API returns: fixed-scale decimal
-    (51, "51"),                       # numeric response degrades, never raises
-    (51.496386, "51.496386"),
+    (51.496386, 51.496386),           # what the API returns: a JSON number
+    (51, 51.0),
+    (None, None),                     # a record with no position
+    ("51.49638600", 51.496386),       # decimal text from an older server still reads
 ])
-def test_coordinate_row_tolerates_numeric_lat_lon(raw, expected):
-    row = CoordinateRow.model_validate({"latitude": raw, "longitude": raw})
+def test_coordinate_row_reads_lat_lon_as_numbers(raw, expected):
+    row = CoordinateRow.model_validate({"id": "r", "latitude": raw, "longitude": raw})
     assert row.latitude == expected and row.longitude == expected
+
+
+def test_coordinate_row_without_position_keeps_nulls():
+    sent = {"id": "r", "location_name": "Unplaced", "latitude": None, "longitude": None,
+            "city": None, "geo_type": "POINT",
+            "geometry": {"type": "Point", "coordinates": [None, None]}}
+    row = CoordinateRow.model_validate(sent)
+    assert row.latitude is None and row.longitude is None and row.city is None
+    assert row.geometry["coordinates"] == [None, None]
+    assert row.model_dump() == sent and list(row.model_dump()) == list(sent)
 
 
 @pytest.mark.parametrize("limit,offset", [(0, None), (50001, None), (None, -1)])

@@ -1,6 +1,15 @@
 # Changelog
 
 ## Unreleased
+- **Breaking: coordinate rows are flat.** `coordinates()` follows the API's new
+  row: each `CoordinateRow` is the free sample's row for your tier plus the
+  record's `id`. The dataset's columns are extra fields on the row (`row.city`,
+  was `row.metadata["city"]`; all of them in `row.model_extra`). `latitude` and
+  `longitude` are floats or `None` (were decimal strings), `geo_type` is the
+  served geometry's type (`"POINT"`) and `geometry` is a GeoJSON Point (was
+  `location`). `metadata` and `location` are gone, and `id` is required.
+  `model_dump()` returns the row in the API's column order. Needs an API that
+  serves flat rows; pre-1.0, so this is a minor release.
 - The staging base URL is now `https://api.topolab.dev` (was
   `https://api-staging.topolab.nl`). `environment="staging"` resolves to it.
 
