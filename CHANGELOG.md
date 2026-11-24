@@ -20,7 +20,9 @@
   the query, and a connection failure or timeout raises `ConnectionError`
   without it. That error has no implicit `__context__`, and it keeps the
   transport error as `__cause__` only when no exception linked to it (cause or
-  context) carries the query. The request still sends the query byte for byte.
+  context) carries the query. The query of any other URL the error quotes (a
+  redirect from the storage host to a second signed link) is removed too. The
+  request still sends the query byte for byte.
 - `sample()` and `to_geojson()` are unchanged.
 - `docs/errors.md` lists `FILE_PREPARING`, `FILE_BUILD_FAILED` and
   `FILE_TOO_LARGE`.

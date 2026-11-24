@@ -690,3 +690,27 @@ async def test_an_unreachable_signed_host_links_no_exception_with_the_query(tmp_
     for x in linked(exc.value):
         assert_no_query(str(x), repr(x), *(str(a) for a in x.args))
     assert_no_query(chain_text(exc.value))
+
+
+SECOND_QUERY = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=R2KEY%2F20261203&X-Amz-Signature=c0ffee77"
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_a_transport_error_quoting_a_redirects_signed_link_carries_no_query(
+        tmp_path, waits, respx_mock, caplog, kind):
+    # The storage host can redirect to a second signed link (a mirror, another
+    # bucket); an error that quotes it must lose that query too.
+    caplog.set_level(logging.DEBUG)
+    mirror = f"https://mirror.example/x.csv?{SECOND_QUERY}"
+    respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready()))
+    signed_route(respx_mock).mock(side_effect=httpx.ConnectError(
+        f"connect failed for {mirror}", request=httpx.Request("GET", mirror)))
+
+    with pytest.raises(TLConnectionError) as exc:
+        await calls(kind)(tmp_path)
+
+    texts = [t for x in linked(exc.value) for t in (str(x), repr(x), *(str(a) for a in x.args))]
+    texts += [chain_text(exc.value), *log_texts(caplog)]
+    for text in texts:
+        assert "X-Amz-Signature" not in text and "c0ffee77" not in text and "R2KEY" not in text, text
+    assert "https://mirror.example/x.csv" in str(exc.value)

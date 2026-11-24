@@ -1,6 +1,7 @@
 """Sync + async HTTP transport: header injection, retry/backoff, error mapping."""
 from __future__ import annotations
 import os
+import re
 import time
 import asyncio
 import logging
@@ -348,9 +349,25 @@ def _connection_error(e: httpx.TransportError, secret_url: str | None) -> TLConn
         err.__suppress_context__ = True
         return err
     queries = _queries(secret_url)
-    err = TLConnError(_without_query(str(e), queries))
+    err = TLConnError(_without_url_queries(_without_query(str(e), queries)))
     texts = [t for x in _linked(e) for t in (str(x), repr(x))]
-    if not any(q in t for t in texts for q in queries):
+    if not any(q in t for t in texts for q in queries) and \
+            all(_without_url_queries(t) == t for t in texts):
         err.__cause__ = e
     err.__suppress_context__ = True
     return err
+
+
+# The query of any absolute URL quoted in a text: from the "?" up to the next
+# space or quote, leaving punctuation that closes the sentence (a ")" after the
+# URL) in place.
+_URL_QUERY = re.compile(
+    r"""(\b[a-z][a-z0-9+.-]*://[^\s?#"'<>]*)\?[^\s"'<>]*?(?=[)\]}>,;.:!]*(?:[\s"'<>]|$))""",
+    re.IGNORECASE)
+
+
+def _without_url_queries(text: str) -> str:
+    """`text` without the query of any URL it quotes: a redirect from the
+    storage host can lead to a second signed link, whose query is a signature
+    too."""
+    return _URL_QUERY.sub(r"\1", text)
