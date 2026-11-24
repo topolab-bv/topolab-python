@@ -18,7 +18,9 @@
 - The signed link's query (its signature) never reaches a log record or an
   error: httpx's `HTTP Request:` line for the signed fetch is logged without
   the query, and a connection failure or timeout raises `ConnectionError`
-  without it. The request still sends the query byte for byte.
+  without it. That error has no implicit `__context__`, and it keeps the
+  transport error as `__cause__` only when no exception linked to it (cause or
+  context) carries the query. The request still sends the query byte for byte.
 - `sample()` and `to_geojson()` are unchanged.
 - `docs/errors.md` lists `FILE_PREPARING`, `FILE_BUILD_FAILED` and
   `FILE_TOO_LARGE`.

@@ -609,3 +609,84 @@ def test_the_query_stays_out_after_a_logging_setup_cleared_the_filters(tmp_path,
         httpx_logger.filters[:] = saved
 
     assert_no_query(*log_texts(caplog))
+
+
+def linked(err: BaseException) -> list[BaseException]:
+    """Every exception reachable from `err` through __cause__ and __context__,
+    whatever __suppress_context__ says: error reporters and debuggers walk
+    both."""
+    seen: list[BaseException] = []
+    todo: list[BaseException] = [err]
+    while todo:
+        x = todo.pop()
+        if any(x is s for s in seen):
+            continue
+        seen.append(x)
+        todo += [y for y in (x.__cause__, x.__context__) if y is not None]
+    return seen
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_no_exception_linked_to_a_signed_link_connection_error_carries_the_query(
+        tmp_path, waits, respx_mock, kind):
+    respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready()))
+    signed_route(respx_mock).mock(side_effect=httpx.ConnectError(
+        f"connect failed for {SIGNED_URL}", request=httpx.Request("GET", SIGNED_URL)))
+
+    with pytest.raises(TLConnectionError) as exc:
+        await calls(kind)(tmp_path)
+
+    for x in linked(exc.value):
+        assert_no_query(str(x), repr(x), *(str(a) for a in x.args))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_an_unreachable_signed_host_links_no_exception_with_the_query(tmp_path, waits, kind):
+    # No mock anywhere: a real local API answers the link route with a signed
+    # link to a closed port, so the chain is the one production raises.
+    import http.server
+    import json
+    import threading
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        closed = s.getsockname()[1]
+    signed = f"http://127.0.0.1:{closed}{SIGNED_PATH}?{SIGNED_QUERY}"
+
+    class Api(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.dumps(ready(url=signed)).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with pytest.raises(TLConnectionError) as exc:
+            if kind.startswith("async"):
+                async with AsyncClient(api_key="tlb_test_key", base_url=base, max_retries=0) as tl:
+                    if kind.endswith("download"):
+                        await tl.dataset(TABLE).download(str(tmp_path / "x.csv"), format="csv")
+                    else:
+                        await tl.dataset(TABLE).archive(str(tmp_path / "x.zip"), month="2026-11", format="csv")
+            else:
+                ds = Client(api_key="tlb_test_key", base_url=base, max_retries=0).dataset(TABLE)
+                if kind.endswith("download"):
+                    ds.download(str(tmp_path / "x.csv"), format="csv")
+                else:
+                    ds.archive(str(tmp_path / "x.zip"), month="2026-11", format="csv")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    for x in linked(exc.value):
+        assert_no_query(str(x), repr(x), *(str(a) for a in x.args))
+    assert_no_query(chain_text(exc.value))

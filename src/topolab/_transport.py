@@ -96,6 +96,7 @@ class Transport:
     def _stream_with(self, client: httpx.Client, path: str, dest, to_error,
                      secret_url: str | None = None, **kw) -> None:
         # streamed GET that never buffers the whole body in memory
+        failure: TLConnError | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 with client.stream("GET", path, **kw) as resp:
@@ -120,9 +121,15 @@ class Transport:
                         raise
                     return
             except httpx.TransportError as e:
-                if attempt >= self._max_retries:
-                    raise _connection_error(e, secret_url)
-                time.sleep(self._delay(attempt, None))
+                if attempt < self._max_retries:
+                    time.sleep(self._delay(attempt, None))
+                    continue
+                failure = _connection_error(e, secret_url)
+                break
+        # Raised outside the except block, so the transport error is never its
+        # implicit __context__ (see _connection_error).
+        if failure is not None:
+            raise failure
 
     def close(self) -> None:
         self._sync.close()
@@ -177,6 +184,7 @@ class Transport:
         # Async streamed GET that never buffers the whole body in memory.
         # Mirrors _stream_with: temp .part + atomic os.replace so a dropped
         # connection never leaves a truncated file at `dest`.
+        failure: TLConnError | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 async with client.stream("GET", path, **kw) as resp:
@@ -198,9 +206,14 @@ class Transport:
                         raise
                     return
             except httpx.TransportError as e:
-                if attempt >= self._max_retries:
-                    raise _connection_error(e, secret_url)
-                await asyncio.sleep(self._delay(attempt, None))
+                if attempt < self._max_retries:
+                    await asyncio.sleep(self._delay(attempt, None))
+                    continue
+                failure = _connection_error(e, secret_url)
+                break
+        # Raised outside the except block, as in _stream_with.
+        if failure is not None:
+            raise failure
 
     async def aclose(self) -> None:
         if self._async is not None:
@@ -308,10 +321,27 @@ _SIGNED_QUERIES = _SignedQueryFilter()
 logging.getLogger("httpx").addFilter(_SIGNED_QUERIES)
 
 
+def _linked(e: BaseException) -> list[BaseException]:
+    """`e` and every exception reachable from it through __cause__ and
+    __context__, whatever __suppress_context__ says: error reporters and
+    debuggers walk both."""
+    seen: list[BaseException] = []
+    todo: list[BaseException] = [e]
+    while todo:
+        x = todo.pop()
+        if any(x is s for s in seen):
+            continue
+        seen.append(x)
+        todo += [y for y in (x.__cause__, x.__context__) if y is not None]
+    return seen
+
+
 def _connection_error(e: httpx.TransportError, secret_url: str | None) -> TLConnError:
-    """The SDK's ConnectionError for a transport failure. For a signed link the
-    message loses the link's query, and the cause is kept only when no text in
-    its chain carries the query."""
+    """The SDK's ConnectionError for a transport failure, raised by the caller
+    outside its except block so `e` is never the implicit __context__. For a
+    signed link the message loses the link's query, and `e` is kept as the
+    cause only when no exception linked to it (cause or context) carries the
+    query in its text or repr."""
     if secret_url is None:
         err = TLConnError(str(e))
         err.__cause__ = e
@@ -319,12 +349,8 @@ def _connection_error(e: httpx.TransportError, secret_url: str | None) -> TLConn
         return err
     queries = _queries(secret_url)
     err = TLConnError(_without_query(str(e), queries))
-    chain: list[BaseException] = []
-    link: BaseException | None = e
-    while link is not None and link not in chain:
-        chain.append(link)
-        link = link.__cause__ or link.__context__
-    if not any(q in str(x) for x in chain for q in queries):
+    texts = [t for x in _linked(e) for t in (str(x), repr(x))]
+    if not any(q in t for t in texts for q in queries):
         err.__cause__ = e
     err.__suppress_context__ = True
     return err
