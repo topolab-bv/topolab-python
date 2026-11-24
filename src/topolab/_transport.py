@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 import time
 import asyncio
+import logging
 import pathlib
-from typing import Any
+import threading
+from contextlib import contextmanager
+from typing import Any, Iterator
 import httpx
 from ._version import __version__
 from .errors import (TopolabError, error_from_response, retry_after_seconds,
@@ -83,10 +86,15 @@ class Transport:
 
     def fetch_signed_to_file(self, url: str, dest) -> None:
         """Stream a signed link to `dest` with a client that sends no API key."""
-        with httpx.Client(**self._signed_client_kwargs()) as client:
-            self._stream_with(client, self._signed_url(url), dest, _signed_link_error)
+        url = self._signed_url(url)
+        with _SIGNED_QUERIES.hiding() as hide, \
+                httpx.Client(**self._signed_client_kwargs(),
+                             event_hooks={"request": [lambda req: hide(str(req.url))]}) as client:
+            hide(url)
+            self._stream_with(client, url, dest, _signed_link_error, secret_url=url)
 
-    def _stream_with(self, client: httpx.Client, path: str, dest, to_error, **kw) -> None:
+    def _stream_with(self, client: httpx.Client, path: str, dest, to_error,
+                     secret_url: str | None = None, **kw) -> None:
         # streamed GET that never buffers the whole body in memory
         for attempt in range(self._max_retries + 1):
             try:
@@ -113,7 +121,7 @@ class Transport:
                     return
             except httpx.TransportError as e:
                 if attempt >= self._max_retries:
-                    raise TLConnError(str(e)) from e
+                    raise _connection_error(e, secret_url)
                 time.sleep(self._delay(attempt, None))
 
     def close(self) -> None:
@@ -154,11 +162,18 @@ class Transport:
 
     async def afetch_signed_to_file(self, url: str, dest) -> None:
         """Async twin of :meth:`fetch_signed_to_file`."""
-        async with httpx.AsyncClient(**self._signed_client_kwargs()) as client:
-            await self._astream_with(client, self._signed_url(url), dest, _signed_link_error)
+        url = self._signed_url(url)
+        with _SIGNED_QUERIES.hiding() as hide:
+            async def on_request(req: httpx.Request) -> None:
+                hide(str(req.url))
+
+            async with httpx.AsyncClient(**self._signed_client_kwargs(),
+                                         event_hooks={"request": [on_request]}) as client:
+                hide(url)
+                await self._astream_with(client, url, dest, _signed_link_error, secret_url=url)
 
     async def _astream_with(self, client: httpx.AsyncClient, path: str, dest, to_error,
-                            **kw) -> None:
+                            secret_url: str | None = None, **kw) -> None:
         # Async streamed GET that never buffers the whole body in memory.
         # Mirrors _stream_with: temp .part + atomic os.replace so a dropped
         # connection never leaves a truncated file at `dest`.
@@ -184,7 +199,7 @@ class Transport:
                     return
             except httpx.TransportError as e:
                 if attempt >= self._max_retries:
-                    raise TLConnError(str(e)) from e
+                    raise _connection_error(e, secret_url)
                 await asyncio.sleep(self._delay(attempt, None))
 
     async def aclose(self) -> None:
@@ -204,4 +219,112 @@ def _signed_link_error(resp: httpx.Response) -> TopolabError:
     err.message = msg
     err.messages = [msg]
     err.body = None
+    return err
+
+
+# --- signed links never reach a log or an error ------------------------------
+#
+# The query of a signed link is its signature: a bearer link to the file for
+# ten minutes. httpx writes the full URL of every request to its INFO log, and
+# a transport error can quote it, so both are stripped of the query while the
+# request itself carries it byte for byte.
+
+def _queries(url: str) -> list[str]:
+    """The forms `url`'s query can take in a text, longest first."""
+    found = {url.partition("?")[2].partition("#")[0]}
+    try:
+        found.add(httpx.URL(url).query.decode("ascii"))
+    except Exception:
+        pass
+    return sorted((q for q in found if q), key=len, reverse=True)
+
+
+def _without_query(text: str, queries: list[str]) -> str:
+    for q in queries:
+        text = text.replace("?" + q, "").replace(q, "[query removed]")
+    return text
+
+
+class _SignedQueryFilter(logging.Filter):
+    """Removes the query of the signed links being fetched from httpx's log
+    records. Records about anything else pass unchanged."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self._active: dict[str, int] = {}
+
+    @contextmanager
+    def hiding(self) -> Iterator:
+        """Yields `hide(url)`; the queries it was given are hidden until exit."""
+        # Installed again if a logging setup removed it since.
+        httpx_logger = logging.getLogger("httpx")
+        if self not in httpx_logger.filters:
+            httpx_logger.addFilter(self)
+        mine: list[str] = []
+
+        def hide(url: str) -> None:
+            with self._lock:
+                for q in _queries(url):
+                    self._active[q] = self._active.get(q, 0) + 1
+                    mine.append(q)
+
+        try:
+            yield hide
+        finally:
+            with self._lock:
+                for q in mine:
+                    left = self._active.get(q, 0) - 1
+                    if left > 0:
+                        self._active[q] = left
+                    else:
+                        self._active.pop(q, None)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._active:
+            return True
+        with self._lock:
+            queries = sorted(self._active, key=len, reverse=True)
+        if isinstance(record.msg, str):
+            record.msg = _without_query(record.msg, queries)
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(self._clean(a, queries) for a in args)
+        elif isinstance(args, dict):
+            record.args = {k: self._clean(v, queries) for k, v in args.items()}
+        return True
+
+    @staticmethod
+    def _clean(arg: Any, queries: list[str]) -> Any:
+        if isinstance(arg, (str, httpx.URL)):
+            text = str(arg)
+            cleaned = _without_query(text, queries)
+            if cleaned != text:
+                return cleaned
+        return arg
+
+
+_SIGNED_QUERIES = _SignedQueryFilter()
+logging.getLogger("httpx").addFilter(_SIGNED_QUERIES)
+
+
+def _connection_error(e: httpx.TransportError, secret_url: str | None) -> TLConnError:
+    """The SDK's ConnectionError for a transport failure. For a signed link the
+    message loses the link's query, and the cause is kept only when no text in
+    its chain carries the query."""
+    if secret_url is None:
+        err = TLConnError(str(e))
+        err.__cause__ = e
+        err.__suppress_context__ = True
+        return err
+    queries = _queries(secret_url)
+    err = TLConnError(_without_query(str(e), queries))
+    chain: list[BaseException] = []
+    link: BaseException | None = e
+    while link is not None and link not in chain:
+        chain.append(link)
+        link = link.__cause__ or link.__context__
+    if not any(q in str(x) for x in chain for q in queries):
+        err.__cause__ = e
+    err.__suppress_context__ = True
     return err

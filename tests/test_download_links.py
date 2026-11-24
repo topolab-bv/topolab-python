@@ -9,6 +9,9 @@ Shapes: the 404 body is what staging answered on 2026-11-24 for
 `POST /v1/dataset/dining_drinking_mcdonalds/exports`; the 200 and 202 bodies and
 the FILE_* codes follow the engine's route contract.
 """
+import logging
+import socket
+
 import httpx
 import pytest
 import respx
@@ -16,6 +19,7 @@ import respx
 from topolab import AsyncClient, Client
 from topolab import _links
 from topolab.errors import AccessDeniedError, InsufficientCreditsError, ServerError
+from topolab.errors import ConnectionError as TLConnectionError
 
 # Every spec states the routes the server has; the ones a spec expects untouched
 # are asserted by call count rather than by leaving them out.
@@ -446,3 +450,162 @@ async def test_async_403_and_failed_build_are_raised(tmp_path, waits, respx_mock
 
     assert exc.value.code == "FILE_BUILD_FAILED"
     assert old.call_count == 0
+
+
+# --- the signed query never reaches a log record or an error ---------------------
+#
+# The query of a signed link is its signature: a working bearer link to a paid
+# file for ten minutes. httpx writes every request's full URL to its INFO log,
+# so a program with `logging.basicConfig(level=logging.INFO)` would store the
+# link. The request itself still carries the query byte for byte.
+
+SIGNED_QUERY = SIGNED_URL.split("?", 1)[1]
+QUERY_PARTS = ("X-Goog-Signature", "5f2d0c9e", "X-Goog-Credential", SIGNED_QUERY)
+
+
+def assert_no_query(*texts: str) -> None:
+    for text in texts:
+        for part in QUERY_PARTS:
+            assert part not in text, f"carries the signed query ({part!r}): {text}"
+
+
+def log_texts(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records] + [caplog.text]
+
+
+def chain_text(err: BaseException) -> str:
+    import traceback
+    return "".join(traceback.format_exception(type(err), err, err.__traceback__))
+
+
+def calls(kind: str):
+    """The four ways a signed link is fetched: (sync|async) x (download|archive)."""
+    async def run(tmp_path):
+        if kind.startswith("async"):
+            async with AsyncClient(api_key="tlb_test_key", base_url=BASE, max_retries=0) as tl:
+                ds = tl.dataset(TABLE)
+                if kind.endswith("download"):
+                    await ds.download(str(tmp_path / "x.csv"), format="csv")
+                else:
+                    await ds.archive(str(tmp_path / "x.zip"), month="2026-11", format="csv")
+        else:
+            ds = Client(api_key="tlb_test_key", base_url=BASE, max_retries=0).dataset(TABLE)
+            if kind.endswith("download"):
+                ds.download(str(tmp_path / "x.csv"), format="csv")
+            else:
+                ds.archive(str(tmp_path / "x.zip"), month="2026-11", format="csv")
+    return run
+
+
+KINDS = ["sync download", "sync archive", "async download", "async archive"]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_the_signed_query_reaches_no_log_record(tmp_path, waits, respx_mock, caplog, kind):
+    caplog.set_level(logging.DEBUG)
+    respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready()))
+    signed = signed_route(respx_mock).mock(return_value=httpx.Response(200, content=LINK_CSV))
+
+    await calls(kind)(tmp_path)
+
+    assert str(signed.calls.last.request.url) == SIGNED_URL
+    assert any("HTTP Request" in r.getMessage() and SIGNED_PATH in r.getMessage()
+               for r in caplog.records), "httpx's request line is still logged, without the query"
+    assert_no_query(*log_texts(caplog))
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_a_signed_link_connection_error_carries_no_query(
+        tmp_path, waits, respx_mock, caplog, kind):
+    caplog.set_level(logging.DEBUG)
+    respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready()))
+    signed_route(respx_mock).mock(side_effect=httpx.ConnectError(
+        f"connect failed for {SIGNED_URL}", request=httpx.Request("GET", SIGNED_URL)))
+
+    with pytest.raises(TLConnectionError) as exc:
+        await calls(kind)(tmp_path)
+
+    assert_no_query(str(exc.value), repr(exc.value), chain_text(exc.value), *log_texts(caplog))
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["sync download", "async archive"])
+async def test_an_unreachable_signed_host_carries_no_query(tmp_path, waits, respx_mock, caplog, kind):
+    # A real connection to a closed port: httpx and httpcore raise and log as
+    # they do in production.
+    caplog.set_level(logging.DEBUG)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    url = f"http://127.0.0.1:{port}{SIGNED_PATH}?{SIGNED_QUERY}"
+    respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready(url=url)))
+    respx_mock.route(host="127.0.0.1").pass_through()
+
+    with pytest.raises(TLConnectionError) as exc:
+        await calls(kind)(tmp_path)
+
+    assert_no_query(str(exc.value), repr(exc.value), chain_text(exc.value), *log_texts(caplog))
+
+
+async def test_a_real_signed_fetch_logs_no_query(tmp_path, waits, respx_mock, caplog):
+    # A real storage host on localhost, so httpcore's DEBUG trace runs too.
+    import http.server
+    import threading
+
+    seen: list[str] = []
+
+    class Storage(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(LINK_CSV)))
+            self.end_headers()
+            self.wfile.write(LINK_CSV)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Storage)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        caplog.set_level(logging.DEBUG)
+        url = f"http://127.0.0.1:{server.server_port}{SIGNED_PATH}?{SIGNED_QUERY}"
+        respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready(url=url)))
+        respx_mock.route(host="127.0.0.1").pass_through()
+
+        await calls("sync download")(tmp_path)
+        await calls("async download")(tmp_path)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert seen == [f"{SIGNED_PATH}?{SIGNED_QUERY}"] * 2
+    assert (tmp_path / "x.csv").read_bytes() == LINK_CSV
+    assert_no_query(*log_texts(caplog))
+
+
+def test_the_api_request_log_is_left_as_httpx_writes_it(respx_mock, caplog):
+    # Only signed links lose their query in the log; the API's own lines stay.
+    caplog.set_level(logging.INFO)
+    respx_mock.get(f"{BASE}/v1/dataset/{TABLE}/archives/list").mock(
+        return_value=httpx.Response(200, json=[]))
+
+    client().dataset(TABLE).archives()
+
+    assert any(f"{BASE}/v1/dataset/{TABLE}/archives/list" in r.getMessage() for r in caplog.records)
+
+
+def test_the_query_stays_out_after_a_logging_setup_cleared_the_filters(tmp_path, waits, respx_mock, caplog):
+    caplog.set_level(logging.INFO)
+    httpx_logger = logging.getLogger("httpx")
+    saved = list(httpx_logger.filters)
+    httpx_logger.filters.clear()
+    try:
+        respx_mock.post(LINK).mock(return_value=httpx.Response(200, json=ready()))
+        signed_route(respx_mock).mock(return_value=httpx.Response(200, content=LINK_CSV))
+
+        client().dataset(TABLE).download(str(tmp_path / "x.csv"), format="csv")
+    finally:
+        httpx_logger.filters[:] = saved
+
+    assert_no_query(*log_texts(caplog))

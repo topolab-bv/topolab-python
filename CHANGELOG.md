@@ -15,6 +15,10 @@
   402, 403 and 5xx answers from the link route are raised, never a fallback.
 - An error while fetching the signed link is raised with the class of its
   status and a message that does not repeat the storage host's body.
+- The signed link's query (its signature) never reaches a log record or an
+  error: httpx's `HTTP Request:` line for the signed fetch is logged without
+  the query, and a connection failure or timeout raises `ConnectionError`
+  without it. The request still sends the query byte for byte.
 - `sample()` and `to_geojson()` are unchanged.
 - `docs/errors.md` lists `FILE_PREPARING`, `FILE_BUILD_FAILED` and
   `FILE_TOO_LARGE`.
