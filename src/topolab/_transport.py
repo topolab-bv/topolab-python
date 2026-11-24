@@ -7,7 +7,8 @@ import pathlib
 from typing import Any
 import httpx
 from ._version import __version__
-from .errors import error_from_response, retry_after_seconds, ConnectionError as TLConnError
+from .errors import (TopolabError, error_from_response, retry_after_seconds,
+                     ConnectionError as TLConnError)
 
 USER_AGENT = f"topolab-python/{__version__} (+https://docs.topolab.nl)"
 _RETRY_STATUS = {429, 500, 502, 503, 504}
@@ -30,6 +31,17 @@ class Transport:
                                   timeout=timeout, proxy=proxy_url)
         self._async: httpx.AsyncClient | None = None
         self._proxy = proxy_url
+
+    # --- signed links ---
+    def _signed_client_kwargs(self) -> dict:
+        # A signed link carries its own authorisation. The client that fetches
+        # it is a separate one with only the User-Agent, so the API key never
+        # leaves for the storage host.
+        return dict(headers={"User-Agent": self._headers["User-Agent"]},
+                    timeout=self._timeout, proxy=self._proxy, follow_redirects=True)
+
+    def _signed_url(self, url: str) -> str:
+        return str(httpx.URL(self._base_url + "/").join(url))
 
     # --- delay calc shared by sync/async ---
     def _delay(self, attempt: int, resp: httpx.Response | None) -> float:
@@ -67,17 +79,25 @@ class Transport:
         return self.request("GET", path, **kw).json()
 
     def stream_to_file(self, path: str, dest, **kw) -> None:
+        self._stream_with(self._sync, path, dest, error_from_response, **kw)
+
+    def fetch_signed_to_file(self, url: str, dest) -> None:
+        """Stream a signed link to `dest` with a client that sends no API key."""
+        with httpx.Client(**self._signed_client_kwargs()) as client:
+            self._stream_with(client, self._signed_url(url), dest, _signed_link_error)
+
+    def _stream_with(self, client: httpx.Client, path: str, dest, to_error, **kw) -> None:
         # streamed GET that never buffers the whole body in memory
         for attempt in range(self._max_retries + 1):
             try:
-                with self._sync.stream("GET", path, **kw) as resp:
+                with client.stream("GET", path, **kw) as resp:
                     if resp.status_code in _RETRY_STATUS and attempt < self._max_retries:
                         resp.read()
                         time.sleep(self._delay(attempt, resp))
                         continue
                     if resp.status_code >= 400:
                         resp.read()
-                        raise error_from_response(resp)
+                        raise to_error(resp)
                     # Stream to a sibling temp file and atomically replace, so a
                     # connection dropped mid-body never leaves a truncated file
                     # at `dest`.
@@ -130,10 +150,18 @@ class Transport:
         return (await self.arequest("GET", path, **kw)).json()
 
     async def astream_to_file(self, path: str, dest, **kw) -> None:
+        await self._astream_with(self._ensure_async(), path, dest, error_from_response, **kw)
+
+    async def afetch_signed_to_file(self, url: str, dest) -> None:
+        """Async twin of :meth:`fetch_signed_to_file`."""
+        async with httpx.AsyncClient(**self._signed_client_kwargs()) as client:
+            await self._astream_with(client, self._signed_url(url), dest, _signed_link_error)
+
+    async def _astream_with(self, client: httpx.AsyncClient, path: str, dest, to_error,
+                            **kw) -> None:
         # Async streamed GET that never buffers the whole body in memory.
-        # Mirrors stream_to_file: temp .part + atomic os.replace so a dropped
+        # Mirrors _stream_with: temp .part + atomic os.replace so a dropped
         # connection never leaves a truncated file at `dest`.
-        client = self._ensure_async()
         for attempt in range(self._max_retries + 1):
             try:
                 async with client.stream("GET", path, **kw) as resp:
@@ -143,7 +171,7 @@ class Transport:
                         continue
                     if resp.status_code >= 400:
                         await resp.aread()
-                        raise error_from_response(resp)
+                        raise to_error(resp)
                     tmp = f"{dest}.part"
                     try:
                         with open(tmp, "wb") as fh:
@@ -163,3 +191,17 @@ class Transport:
         if self._async is not None:
             await self._async.aclose()
         self._sync.close()
+
+
+def _signed_link_error(resp: httpx.Response) -> TopolabError:
+    """The error for a failed signed-link fetch. The class follows the status as
+    everywhere else; the message never repeats the storage host's body, which
+    can quote the link's signature."""
+    err = error_from_response(resp)
+    msg = (f"Fetching the file from its signed link failed with HTTP {resp.status_code}. "
+           "Call again for a new link.")
+    err.args = (msg,)
+    err.message = msg
+    err.messages = [msg]
+    err.body = None
+    return err

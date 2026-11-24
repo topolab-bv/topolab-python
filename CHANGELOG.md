@@ -1,6 +1,23 @@
 # Changelog
 
 ## Unreleased
+- `download()` and `archive()` (sync and async) fetch files through the link
+  route, `POST /v1/dataset/{table}/exports`: `download()` asks for the current
+  month's file (`bundle: "file"`), `archive()` for one month's zip
+  (`month`, `bundle: "zip"`). A 200 names a 10-minute signed link, which a
+  separate `httpx.Client` fetches without the `X-API-Key` header. A 202 means
+  the file is being prepared: the SDK waits `retryAfterSeconds` (at least 1
+  second, 5 when absent) and asks again, for at most 30 minutes, then raises
+  `ServerError` with `code == "FILE_PREPARING"` and `details["build"]`.
+- A 404 or 405 from the link route (a server without it) falls back, on that
+  call only, to the old route (`GET .../files/{format}` or
+  `GET .../archives/{month}/{format}`) with today's behaviour and retries.
+  402, 403 and 5xx answers from the link route are raised, never a fallback.
+- An error while fetching the signed link is raised with the class of its
+  status and a message that does not repeat the storage host's body.
+- `sample()` and `to_geojson()` are unchanged.
+- `docs/errors.md` lists `FILE_PREPARING`, `FILE_BUILD_FAILED` and
+  `FILE_TOO_LARGE`.
 - The staging base URL is now `https://api.topolab.dev` (was
   `https://api-staging.topolab.nl`). `environment="staging"` resolves to it.
 

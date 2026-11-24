@@ -62,7 +62,8 @@ def test_iter_items_paginates(fx):
 
 
 @respx.mock
-def test_download_streams_to_disk(fx, tmp_path):
+def test_download_streams_to_disk(fx, tmp_path, no_link_route):
+    no_link_route(BASE, "nl-domino-poi")
     respx.get(f"{BASE}/v1/dataset/nl-domino-poi/files/geojson").mock(
         return_value=httpx.Response(200, json=fx("full.geojson")))
     out = tmp_path / "out.geojson"

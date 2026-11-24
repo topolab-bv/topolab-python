@@ -126,6 +126,32 @@ tl.dataset("nl-domino-poi").download("dominos-nl.geojson", format="geojson")
 `download()` streams to a temp file and atomically renames, so an interrupted
 transfer never leaves a truncated file at the destination.
 
+## How `download()` and `archive()` fetch a file
+
+Both ask the link route, `POST /v1/dataset/{table}/exports`, for a signed link
+to the file: `download()` asks for the current month's file as it is
+(`{"format": ..., "bundle": "file"}`), `archive()` for one month's zip
+(`{"format": ..., "month": ..., "bundle": "zip"}`). The link is valid for 10
+minutes and is fetched by a separate HTTP client that sends no API key, so the
+key never reaches the storage host.
+
+- **Ready (200):** the file is fetched from the link and written to `path`.
+- **Preparing (202):** the SDK waits the `retryAfterSeconds` the server names
+  (at least 1 second; 5 seconds when it names none) and asks again. Waiting
+  costs no credits. After 30 minutes it stops and raises `ServerError` with
+  `code == "FILE_PREPARING"` and the build id in `details["build"]`; the build
+  keeps going on the server, so a later call finds the file ready.
+- **Failed:** the server answers 503 with `code == "FILE_BUILD_FAILED"`. It is
+  retried like any 503 and then raised as `ServerError`.
+- **No link route (404 or 405):** a server that does not have the link route
+  yet gets today's request instead, `GET .../files/{format}` or
+  `GET .../archives/{month}/{format}`, with the same retries as before. This is
+  decided on every call; nothing is remembered between calls.
+- **Any other error** (402, 403, 5xx, ...) is raised as it was before; it never
+  falls back to the old route.
+
+`sample()` and `to_geojson()` are unchanged.
+
 ## GeoPandas
 
 With the `geo` extra installed:

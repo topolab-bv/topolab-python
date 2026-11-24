@@ -59,7 +59,8 @@ async def test_async_sample_rejects_unknown_format():
 
 
 @respx.mock
-async def test_async_download_streams_to_disk(fx, tmp_path):
+async def test_async_download_streams_to_disk(fx, tmp_path, no_link_route):
+    no_link_route(BASE, "nl-domino-poi")
     respx.get(f"{BASE}/v1/dataset/nl-domino-poi/files/geojson").mock(
         return_value=httpx.Response(200, json=fx("full.geojson")))
     out = tmp_path / "out.geojson"
@@ -70,7 +71,8 @@ async def test_async_download_streams_to_disk(fx, tmp_path):
 
 
 @respx.mock
-async def test_async_download_addon_error():
+async def test_async_download_addon_error(no_link_route):
+    no_link_route(BASE, "nl-domino-poi")
     respx.get(f"{BASE}/v1/dataset/nl-domino-poi/files/geojson").mock(
         return_value=httpx.Response(403, json={"message": "This endpoint requires the api-access add-on"}))
     async with AsyncClient(api_key="k", base_url=BASE) as tl:
@@ -111,7 +113,8 @@ async def test_async_archives(fx_owned):
 
 
 @respx.mock
-async def test_async_archive_streams_to_disk(tmp_path):
+async def test_async_archive_streams_to_disk(tmp_path, no_link_route):
+    no_link_route(BASE, TABLE)
     respx.get(f"{BASE}/v1/dataset/{TABLE}/archives/latest/geojson").mock(
         return_value=httpx.Response(200, content=b"PK\x03\x04zip"))
     out = tmp_path / "a.zip"

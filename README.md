@@ -88,6 +88,11 @@ gdf  = ds.to_geodataframe()            # GeoPandas GeoDataFrame  (needs [geo])
 path = ds.download("dominos.geojson")  # streamed to disk, never buffered
 ```
 
+`download()` and `archive()` fetch the file through a 10-minute signed link
+that is requested with your key and fetched without it. On a server without
+the link route they use the old routes, decided on every call. See
+[the guide](docs/guide.md#how-download-and-archive-fetch-a-file).
+
 ### Pull everything you own
 
 ```python

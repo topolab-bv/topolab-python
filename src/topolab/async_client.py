@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 from typing import Any, AsyncIterator, Sequence
+from . import _links
 from .errors import ConfigurationError
 from ._transport import Transport
 from .models import (
@@ -39,9 +40,11 @@ class AsyncDataset:
         return await self._t.aget_json(f"/v1/dataset/{self.slug}/files/geojson")
 
     async def download(self, path: str, format: str = "geojson") -> str:
+        """Async twin of :meth:`topolab.dataset.Dataset.download`."""
         if format not in _BULK_FORMATS:
             raise ValueError(f"download format must be one of {sorted(_BULK_FORMATS)}")
-        await self._t.astream_to_file(f"/v1/dataset/{self.slug}/files/{format}", path)
+        await _links.afetch(self._t, self.slug, {"format": format, "bundle": "file"},
+                            f"/v1/dataset/{self.slug}/files/{format}", path)
         return path
 
     async def to_geodataframe(self):
@@ -54,10 +57,13 @@ class AsyncDataset:
 
     async def archive(self, path: str, *, month: str = "latest",
                       format: str = "geojson") -> str:
+        """Async twin of :meth:`topolab.dataset.Dataset.archive`."""
         if format not in _BULK_FORMATS:
             raise ValueError(f"archive format must be one of {sorted(_BULK_FORMATS)}")
-        await self._t.astream_to_file(
-            f"/v1/dataset/{self.slug}/archives/{validate_month(month)}/{format}", path)
+        month = validate_month(month)
+        await _links.afetch(self._t, self.slug,
+                            {"format": format, "month": month, "bundle": "zip"},
+                            f"/v1/dataset/{self.slug}/archives/{month}/{format}", path)
         return path
 
     async def coordinates(self, *, limit: int | None = None,
