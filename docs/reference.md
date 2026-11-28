@@ -33,12 +33,12 @@ Client(
 | `.metadata(locale=None)` | `DatasetSummary` | Dataset metadata |
 | `.sample(format="geojson")` | `dict` \| `str` | Free preview; `csv`/`json`/`geojson`/`kml` |
 | `.to_geojson()` | `dict` | Full dataset (requires `API_ACCESS`) |
-| `.download(path, format="geojson")` | `str` | Streamed; `csv`/`json`/`geojson`/`kml`/`shp` |
+| `.download(path, format="geojson")` | `str` | Streamed through a signed link (old route on a server without the link route); `csv`/`json`/`geojson`/`kml`/`shp` |
 | `.to_geodataframe()` | `geopandas.GeoDataFrame` | Requires the `geo` extra |
 | `.items(*, bbox, limit=100, offset, category, city, country)` | `dict` | One page of OGC features |
 | `.iter_items(*, page_size=100, total_limit=None, bbox, category, city, country)` | iterator of `dict` | Auto-paginates |
 | `.archives()` | `list[Archive]` | Available monthly archives, newest first |
-| `.archive(path, *, month="latest", format="geojson")` | `str` | Streams one monthly archive (zip) to `path` |
+| `.archive(path, *, month="latest", format="geojson")` | `str` | Streams one monthly archive (zip) to `path` through a signed link (old route on a server without the link route) |
 | `.coordinates(*, limit=None, offset=None)` | `CoordinatePage` | Coordinate rows; `limit` ≤ 50000, `offset` ≥ 0 |
 
 On `AsyncClient`, every `Dataset` method is awaitable and `iter_items` is an

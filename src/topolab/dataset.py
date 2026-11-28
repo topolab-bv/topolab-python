@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from typing import Any, Iterator
+from . import _links
 from .models import Archive, CoordinatePage, DatasetSummary
 
 _SAMPLE_FORMATS = {"csv", "json", "geojson", "kml"}
@@ -79,9 +80,16 @@ class Dataset:
         return self._t.get_json(f"/v1/dataset/{self.slug}/files/geojson")
 
     def download(self, path: str, format: str = "geojson") -> str:
+        """Write the current month's file to `path` and return `path`.
+
+        Asks the link route for a signed link (waiting while the file is
+        prepared) and fetches it without the API key. A server without the
+        link route (404 or 405) gets today's `GET .../files/{format}` instead.
+        """
         if format not in _BULK_FORMATS:
             raise ValueError(f"download format must be one of {sorted(_BULK_FORMATS)}")
-        self._t.stream_to_file(f"/v1/dataset/{self.slug}/files/{format}", path)
+        _links.fetch(self._t, self.slug, {"format": format, "bundle": "file"},
+                     f"/v1/dataset/{self.slug}/files/{format}", path)
         return path
 
     def to_geodataframe(self):
@@ -94,10 +102,17 @@ class Dataset:
         return [Archive.model_validate(a) for a in body]
 
     def archive(self, path: str, *, month: str = "latest", format: str = "geojson") -> str:
+        """Write one month's zip to `path` and return `path`.
+
+        Asks the link route for that month's zip and fetches it without the
+        API key. A server without the link route (404 or 405) gets today's
+        `GET .../archives/{month}/{format}` instead.
+        """
         if format not in _BULK_FORMATS:
             raise ValueError(f"archive format must be one of {sorted(_BULK_FORMATS)}")
-        self._t.stream_to_file(
-            f"/v1/dataset/{self.slug}/archives/{validate_month(month)}/{format}", path)
+        month = validate_month(month)
+        _links.fetch(self._t, self.slug, {"format": format, "month": month, "bundle": "zip"},
+                     f"/v1/dataset/{self.slug}/archives/{month}/{format}", path)
         return path
 
     # --- coordinates ---

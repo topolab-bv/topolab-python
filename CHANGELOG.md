@@ -1,6 +1,36 @@
 # Changelog
 
 ## Unreleased
+- `download()` (sync and async) writes the build's documents the link route
+  names beside the file: `<path>.columns.json` and `<path>.notices/<name>`,
+  fetched like the file, without the `X-API-Key` header. A notice whose name
+  is not a plain file name is skipped; a document that cannot be fetched fails
+  the call. `archive()` writes the zip only, which holds them.
+- `download()` and `archive()` (sync and async) fetch files through the link
+  route, `POST /v1/dataset/{table}/exports`: `download()` asks for the current
+  month's file (`bundle: "file"`), `archive()` for one month's zip
+  (`month`, `bundle: "zip"`). A 200 names a 10-minute signed link, which a
+  separate `httpx.Client` fetches without the `X-API-Key` header. A 202 means
+  the file is being prepared: the SDK waits `retryAfterSeconds` (at least 1
+  second, 5 when absent) and asks again, for at most 30 minutes, then raises
+  `ServerError` with `code == "FILE_PREPARING"` and `details["build"]`.
+- A 404 or 405 from the link route (a server without it) falls back, on that
+  call only, to the old route (`GET .../files/{format}` or
+  `GET .../archives/{month}/{format}`) with today's behaviour and retries.
+  402, 403 and 5xx answers from the link route are raised, never a fallback.
+- An error while fetching the signed link is raised with the class of its
+  status and a message that does not repeat the storage host's body.
+- The signed link's query (its signature) never reaches a log record or an
+  error: httpx's `HTTP Request:` line for the signed fetch is logged without
+  the query, and a connection failure or timeout raises `ConnectionError`
+  without it. That error has no implicit `__context__`, and it keeps the
+  transport error as `__cause__` only when no exception linked to it (cause or
+  context) carries the query. The query of any other URL the error quotes (a
+  redirect from the storage host to a second signed link) is removed too. The
+  request still sends the query byte for byte.
+- `sample()` and `to_geojson()` are unchanged.
+- `docs/errors.md` lists `FILE_PREPARING`, `FILE_BUILD_FAILED` and
+  `FILE_TOO_LARGE`.
 - The staging base URL is now `https://api.topolab.dev` (was
   `https://api-staging.topolab.nl`). `environment="staging"` resolves to it.
 

@@ -114,7 +114,8 @@ def test_archives_addon_error(fx):
 
 
 @respx.mock
-def test_archive_streams_to_disk(tmp_path):
+def test_archive_streams_to_disk(tmp_path, no_link_route):
+    no_link_route(BASE, TABLE)
     route = respx.get(f"{BASE}/v1/dataset/{TABLE}/archives/latest/geojson").mock(
         return_value=httpx.Response(200, content=b"PK\x03\x04zip"))
     out = tmp_path / "a.zip"
@@ -124,7 +125,8 @@ def test_archive_streams_to_disk(tmp_path):
 
 
 @respx.mock
-def test_archive_addresses_an_explicit_month(tmp_path):
+def test_archive_addresses_an_explicit_month(tmp_path, no_link_route):
+    no_link_route(BASE, TABLE)
     route = respx.get(f"{BASE}/v1/dataset/{TABLE}/archives/2026-07-15/csv").mock(
         return_value=httpx.Response(200, content=b"zip"))
     client().dataset(TABLE).archive(str(tmp_path / "a.zip"), month="2026-07-15", format="csv")
@@ -132,7 +134,8 @@ def test_archive_addresses_an_explicit_month(tmp_path):
 
 
 @respx.mock
-def test_archive_missing_month_is_not_found(tmp_path, fx_owned):
+def test_archive_missing_month_is_not_found(tmp_path, fx_owned, no_link_route):
+    no_link_route(BASE, TABLE)
     respx.get(f"{BASE}/v1/dataset/{TABLE}/archives/2026-01/csv").mock(
         return_value=httpx.Response(404, json=fx_owned("error-404-archive.json")))
     with pytest.raises(NotFoundError):
@@ -140,8 +143,9 @@ def test_archive_missing_month_is_not_found(tmp_path, fx_owned):
 
 
 @pytest.mark.parametrize("month", ["latest", "LATEST", "2026-07", "2026-07-15", "2024-02-29"])
-def test_archive_accepts_valid_months(month, tmp_path):
+def test_archive_accepts_valid_months(month, tmp_path, no_link_route):
     with respx.mock:
+        no_link_route(BASE, TABLE)
         route = respx.get(url__regex=rf"{BASE}/v1/dataset/{TABLE}/archives/.+/geojson").mock(
             return_value=httpx.Response(200, content=b"zip"))
         client().dataset(TABLE).archive(str(tmp_path / "a.zip"), month=month)
