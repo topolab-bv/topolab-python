@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- `download()` (sync and async) writes the build's documents the link route
+  names beside the file: `<path>.columns.json` and `<path>.notices/<name>`,
+  fetched like the file, without the `X-API-Key` header. A notice whose name
+  is not a plain file name is skipped; a document that cannot be fetched fails
+  the call. `archive()` writes the zip only, which holds them.
 - `download()` and `archive()` (sync and async) fetch files through the link
   route, `POST /v1/dataset/{table}/exports`: `download()` asks for the current
   month's file (`bundle: "file"`), `archive()` for one month's zip

@@ -9,12 +9,20 @@ goes to the old route (`GET .../files/{format}` or
 `GET .../archives/{month}/{format}`) with today's behaviour and retries. Nothing
 is remembered between calls, so a script keeps working while servers gain or
 lose the route. Every other error (402, 403, 5xx, ...) is raised.
+
+A 200 also names the build's documents (`documents`: its `columns.json` and each
+notice file). A plain file (`bundle: "file"`) gets them beside it, fetched the
+same way as the file: `<file>.columns.json` and `<file>.notices/<name>`. A zip
+holds them itself. A notice whose name is not a plain file name is skipped; a
+document that cannot be fetched fails the call.
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .errors import ServerError, TopolabError, _seconds, retry_after_seconds
@@ -39,9 +47,43 @@ def link_path(slug: str) -> str:
     return f"/v1/dataset/{slug}/exports"
 
 
+#: A notice name the SDK writes: a plain file name, never a path.
+NOTICE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
 @dataclass
 class _Ready:
     url: str
+    #: (signed link, destination) of each document to write beside a plain file.
+    documents: list = field(default_factory=list)
+
+
+def _documents(body: dict) -> list:
+    """The build's documents a 200 names, as (signed link, suffix) pairs; unsafe notice names skipped."""
+    named = body.get("documents")
+    if not isinstance(named, dict):
+        return []
+    out = []
+    columns = named.get("columns")
+    if isinstance(columns, str) and columns:
+        out.append((columns, ".columns.json"))
+    notices = named.get("notices")
+    for notice in notices if isinstance(notices, list) else []:
+        if not isinstance(notice, dict):
+            continue
+        name, url = notice.get("name"), notice.get("url")
+        if isinstance(name, str) and NOTICE_NAME.match(name) and isinstance(url, str) and url:
+            out.append((url, os.path.join(".notices", name)))
+    return out
+
+
+def _beside(dest: str, suffix: str) -> str:
+    """Where a document of `dest` goes: `<dest>.columns.json` or `<dest>.notices/<name>` (its folder made)."""
+    if suffix.startswith(".notices"):
+        folder = f"{dest}.notices"
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, os.path.basename(suffix))
+    return f"{dest}{suffix}"
 
 
 @dataclass
@@ -81,7 +123,7 @@ def _read_answer(resp) -> _Ready | _Preparing:
                           status=resp.status_code, body=body)
     url = body.get("url")
     if resp.status_code == 200 and state == "ready" and isinstance(url, str) and url:
-        return _Ready(url=url)
+        return _Ready(url=url, documents=_documents(body))
     raise _unexpected(resp, body)
 
 
@@ -113,6 +155,9 @@ def fetch(transport, slug: str, body: dict, fallback_path: str, dest: str) -> No
         answer = _read_answer(resp)
         if isinstance(answer, _Ready):
             transport.fetch_signed_to_file(answer.url, dest)
+            if body.get("bundle") == "file":
+                for url, suffix in answer.documents:
+                    transport.fetch_signed_to_file(url, _beside(dest, suffix))
             return
         if _past_budget(started, answer.wait):
             raise _still_preparing(answer)
@@ -133,6 +178,9 @@ async def afetch(transport, slug: str, body: dict, fallback_path: str, dest: str
         answer = _read_answer(resp)
         if isinstance(answer, _Ready):
             await transport.afetch_signed_to_file(answer.url, dest)
+            if body.get("bundle") == "file":
+                for url, suffix in answer.documents:
+                    await transport.afetch_signed_to_file(url, _beside(dest, suffix))
             return
         if _past_budget(started, answer.wait):
             raise _still_preparing(answer)
